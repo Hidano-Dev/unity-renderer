@@ -12,7 +12,7 @@
   - _Requirements: 15.4_
   - Files: package.json, tsconfig.json, biome.json, vitest.config.ts, .gitignore
 
-- [ ] 2. 検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
+- [x] 2. 検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
 - [x] 2.1 スパイク計画文書と検証環境を準備する
   - `spike/README.md` に検証項目 P-1〜P-13 の全一覧・各項目の確認内容・成功基準・失敗基準を design から転記・具体化して記録する
   - 実測に使う Unity 6 のテスト用プロジェクト（Timeline + PlayableDirector を含む最小 Scene 構成）を準備し、その所在と前提条件（`unity auth login` 済み等）を文書に記録する
@@ -39,7 +39,7 @@
   - _Requirements: 1.1, 1.2_
   - Files: spike/README.md
 
-- [ ] 2.4 GO/NO-GO を判定しユーザー承認を得て設計へ反映する
+- [x] 2.4 GO/NO-GO を判定しユーザー承認を得て設計へ反映する
   - 残項目（P-12: 復元書き戻しの atomicity、P-13: フック地点での出力確定と Editor 接続維持の両立）を机上検証＋実測で確認し記録する
   - P-1〜P-13 の確定結果（採用/フォールバック採用/不成立）を `spike/README.md` に総括し、GO/NO-GO 判定を明記する
   - 判定結果をユーザーに報告して承認を求め、承認状態を `spike/README.md` に記録する。**承認完了までタスク 3 以降には着手しない**。NO-GO の場合は後続実装へ進まず、代替方針の再要件化（requirements.md 更新）を提示する
@@ -48,7 +48,7 @@
   - _Requirements: 1.1, 1.2, 1.3_
   - Files: spike/README.md, .kiro/specs/unity-render-core/design.md
 
-- [ ] 3. 共通基盤と設定レイヤを実装する
+- [x] 3. 共通基盤と設定レイヤを実装する
 - [x] 3.1 共通基盤（Result 型・ロガー・ツール専有ディレクトリ解決）を実装する
   - 全レイヤ共通の Result 型・エラー分類・JsonValue 型を定義する
   - 通常/デバッグの 2 モードロガーを実装し、デバッグ無効時に詳細ログが出力へ混在しないことを保証する
@@ -57,7 +57,7 @@
   - _Requirements: 13.2, 13.3_
   - Files: src/shared/types.ts, src/shared/logger.ts, src/shared/paths.ts, tests/shared/logger.test.ts, tests/shared/paths.test.ts
 
-- [ ] 3.2 設定スキーマと検証エラーを実装する
+- [x] 3.2 設定スキーマと検証エラーを実装する
   - 設定 JSON の全項目（プロジェクト指定・Scene 名一覧・書き出し範囲・解像度・フレームレート・出力フォーマット 2 形式・出力先/ファイル名・デバッグフラグ・タイムアウト上書き）を zod スキーマとして定義する
   - 必須項目欠落・型不正・不正値を項目パス付きエラーとして検出し、Unity 関連処理を一切開始する前に失敗させる
   - 解像度・フレームレートは設定側で必須とし、Timeline 側設定に依存しない出力の前提を型で保証する。プリセット管理は提供しない
@@ -73,7 +73,7 @@
   - _Requirements: 2.1, 2.2, 10.6, 15.3_
   - Files: src/config/load.ts, src/config/template.ts, tests/config/load.test.ts, tests/config/template.test.ts
 
-- [ ] 4. Unity 環境検出とバージョン一致確認を実装する
+- [x] 4. Unity 環境検出とバージョン一致確認を実装する
 - [x] 4.1 (P) Unity CLI 検出・Editor 列挙・プロジェクトバージョン解析を実装する
   - `unity` コマンドの存在・実行可否確認と、不在時のセットアップ手順参照付きエラーを実装する
   - `unity editors -i` 出力の寛容な行パーサを実装し、スパイクで採取した実出力フィクスチャでテストを固定する
@@ -84,7 +84,7 @@
   - _Boundary: unity-env_
   - Files: src/unity-env/unity-cli.ts, src/unity-env/editors.ts, src/unity-env/project-version.ts, tests/unity-env/unity-cli.test.ts, tests/unity-env/editors.test.ts, tests/unity-env/project-version.test.ts
 
-- [ ] 4.2 バージョン一致確認と unity install 誘導フローを実装する
+- [x] 4.2 バージョン一致確認と unity install 誘導フローを実装する
   - 要求バージョンと一致する Editor の探索と、不一致時の「インストール実行 or 中断」の対話確認を実装する
   - インストール成功時は継続、中断選択・インストール失敗時はプロジェクト無変更のまま失敗終了する
   - 非対話環境（stdin が TTY でない）では自動的に中断を選択して失敗終了する
@@ -92,7 +92,7 @@
   - _Requirements: 4.3, 4.4, 4.5, 4.9_
   - Files: src/unity-env/install.ts, tests/unity-env/install.test.ts
 
-- [ ] 5. プロジェクト非介入ガード（バックアップ・復元・復旧・ロック・Scene 解決）を実装する
+- [x] 5. プロジェクト非介入ガード（バックアップ・復元・復旧・ロック・Scene 解決）を実装する
 - [x] 5.1 (P) manifest バックアップとパッケージ一時追加を実装する
   - `manifest.json` / `packages-lock.json` をツール専有ディレクトリへバックアップし、コピーのバイト一致検証後にのみ一時追加へ進む。バックアップ失敗時は一時追加を行わず失敗終了する
   - セッションメタデータ（session.json）の atomic write（temp → rename）と、`packages-lock.json` 不在プロジェクトの「不在」記録を実装する
@@ -103,7 +103,7 @@
   - _Boundary: project-guard_
   - Files: src/project-guard/backup.ts, src/project-guard/manifest-patch.ts, tests/project-guard/backup.test.ts, tests/project-guard/manifest-patch.test.ts
 
-- [ ] 5.2 復元・クラッシュ復旧・多重起動ガードを実装する
+- [x] 5.2 復元・クラッシュ復旧・多重起動ガードを実装する
   - バッチ終了時の復元（バックアップからの書き戻し + セッション状態更新 + クリーンアップ）を実装し、復元後に manifest 群がバックアップとバイト一致することを保証する
   - 起動時のバックアップ残骸（active セッション）検出・ユーザー通知・復元実行と、復元失敗時の手動復旧手順提示を実装する
   - active セッション既存時の多重実行エラー停止を実装する
@@ -119,7 +119,7 @@
   - _Boundary: project-guard/lock_
   - Files: src/project-guard/lock.ts, tests/project-guard/lock.test.ts
 
-- [ ] 5.4 (P) Scene 名解決を実装する
+- [x] 5.4 (P) Scene 名解決を実装する
   - Scene 名（パス不可）を `Assets/` 配下の `.unity` ファイルへ大文字小文字区別で解決する（`Packages/` は対象外）
   - 全 Scene 名の一括チェックで、不足時は不足一覧・重複時は候補パス一覧を提示して即エラー停止する
   - 完了条件: 解決成功・不足・同名重複・大文字小文字・Packages 除外の各ケースが単体テストで検証されている
@@ -127,8 +127,8 @@
   - _Boundary: project-guard/scene-resolver_
   - Files: src/project-guard/scene-resolver.ts, tests/project-guard/scene-resolver.test.ts
 
-- [ ] 6. eval 用 C# ペイロード群を実装する
-- [ ] 6.1 テンプレート管理とパラメータ注入機構を実装する
+- [x] 6. eval 用 C# ペイロード群を実装する
+- [x] 6.1 テンプレート管理とパラメータ注入機構を実装する
   - C# コードを独立テンプレートファイルとして管理し、ビルド時に文字列アセットとして実行ファイルへ埋め込む機構を実装する
   - プレースホルダへの JSON 埋め込みによる単一方式のパラメータ注入を実装する（文字列連結による C# 組み立ては行わない）
   - 完了条件: 引用符・バックスラッシュ・改行・非 ASCII を含む Windows パスの注入がエスケープ事故なく行われることが単体テストで検証されている
@@ -154,7 +154,7 @@
   - _Boundary: csharp-payloads/setup-recorder_
   - Files: src/csharp-payloads/templates/setup-recorder.cs, tests/csharp-payloads/setup-recorder.test.ts
 
-- [ ] 6.4 (P) 書き出し開始と未保存終了ペイロードを実装する
+- [x] 6.4 (P) 書き出し開始と未保存終了ペイロードを実装する
   - Play Mode 突入・再生開始と、書き出し進行・完了・失敗をステータス JSON へ逐次書き込む監視コールバック（スパイクで確定した atomic write 仕様・ドメインリロード対応）を実装する
   - シーン・アセットを一切保存せず Editor を終了させるペイロードを実装する
   - 完了条件: スナップショットテストと必須 API 呼び出し列（保存なし終了等）の検証が通る
@@ -163,7 +163,7 @@
   - _Boundary: csharp-payloads/start-recording, csharp-payloads/quit-editor_
   - Files: src/csharp-payloads/templates/start-recording.cs, src/csharp-payloads/templates/quit-editor.cs, tests/csharp-payloads/start-recording.test.ts, tests/csharp-payloads/quit-editor.test.ts
 
-- [ ] 7. Editor セッション管理を実装する
+- [x] 7. Editor セッション管理を実装する
 - [x] 7.1 Editor の GUI 起動・接続確立・強制終了を実装する
   - `unity open` による GUI モード起動（batchmode / nographics 不使用）と PID 追跡・冪等な強制終了を実装する
   - 起動前のポート 7800 使用チェック（使用中は Editor を起動せず即失敗）と、起動後の接続待ちポーリング・接続タイムアウト時のプロセス終了 + 手掛かり付きエラーを実装する
@@ -179,7 +179,7 @@
   - _Requirements: 7.2, 13.2_
   - Files: src/editor-session/pipeline-client.ts, tests/editor-session/pipeline-client.test.ts
 
-- [ ] 7.3 ステータスチャネルによる完了検知を実装する
+- [x] 7.3 ステータスチャネルによる完了検知を実装する
   - ステータス JSON ファイルのポーリング読み取りによる書き出し完了・失敗の検知（スパイクで確定した状態遷移・古いステータス識別・更新停滞時の打ち切り）を実装する
   - 書き込み途中の JSON は「変化なし」としてスキップし次ポーリングへ進む
   - 完了条件: completed / failed / タイムアウト / 部分書き込みスキップの各経路が単体テストで検証されている
@@ -193,7 +193,7 @@
   - _Requirements: 11.1, 11.2_
   - Files: src/editor-session/session.ts, tests/editor-session/session.test.ts
 
-- [ ] 8. バッチ実行・出力管理・フック・進捗表示を実装する
+- [x] 8. バッチ実行・出力管理・フック・進捗表示を実装する
 - [x] 8.1 (P) 出力ファイル名ワイルドカード展開と出力管理を実装する
   - Recorder 準拠のワイルドカード一式（`<Scene>` `<Take>` `<Recorder>` 等）の展開規則と、未知ワイルドカードの Preflight 検証エラーを実装する
   - `<Take>` の既存ファイル走査による採番と、2 形式出力時のファイル名衝突検証を実装する
@@ -224,7 +224,7 @@
   - _Boundary: reporting_
   - Files: src/reporting/progress.ts, src/reporting/exit-code.ts, tests/reporting/progress.test.ts, tests/reporting/exit-code.test.ts
 
-- [ ] 8.4 1 Scene ジョブフローを実装する
+- [x] 8.4 1 Scene ジョブフローを実装する
   - 状態遷移（起動→接続→Scene オープン→Recorder 構成→書き出し→検証→フック→終了）を実装し、Director 不在・接続不能・書き出し失敗・タイムアウトのあらゆる失敗経路を「不完全出力の削除（デバッグ時除く）→ Editor 確実終了 → 失敗記録」に収束させる
   - 書き出しタイムアウト超過時のハングした Editor プロセスの強制終了と、範囲未指定時の Timeline 全長によるタイムアウト確定（Scene オープン応答後）を実装する
   - 書き出し成功時のみフックを発火し、フック失敗時も未保存終了を必ず実行する
@@ -233,7 +233,7 @@
   - _Depends: 6.2, 6.3, 6.4, 7.4, 8.1, 8.2_
   - Files: src/batch/scene-job.ts, tests/batch/scene-job.test.ts
 
-- [ ] 8.5 直列バッチランナーを実装する
+- [x] 8.5 直列バッチランナーを実装する
   - 複数 Scene を直列キューで 1 Scene ずつ処理し、Scene ごとに Editor プロセスを再起動する（前 Scene の Editor 終了 → 新規起動）
   - Scene 失敗時もバッチを中断せず記録して継続し、全 Scene 終了後に成否一覧を確定してから終了処理へ進む
   - Scene 間・タイムアウト時もパッケージ一時追加状態を維持し、復元はバッチ終了時に 1 回だけ実行されることを保証する
@@ -241,7 +241,7 @@
   - _Requirements: 6.3, 10.5, 12.1, 12.2, 12.3, 12.4_
   - Files: src/batch/runner.ts, tests/batch/runner.test.ts
 
-- [ ] 9. CLI サブコマンドを統合する
+- [x] 9. CLI サブコマンドを統合する
 - [x] 9.1 render サブコマンドと合成ルートを実装する
   - クラッシュ復旧 → Preflight（設定検証 → 環境検出 → Scene 解決 → ロック確認）→ バックアップ/一時追加 → バッチ実行 → 復元（finally 保証）→ 終了コードの全体フローを組み立てる
   - Preflight エラーは終了コード 1、Scene 失敗は 2、復元失敗は 3（手動復旧手順提示付き）で終了する
@@ -257,7 +257,7 @@
   - Files: src/cli/check.ts, src/cli/init.ts, tests/cli/check.test.ts, tests/cli/init.test.ts
 
 - [ ] 10. 結合検証と実機 E2E を実施する
-- [ ] 10.1 フェイクを用いた結合テスト一式を整備する
+- [x] 10.1 フェイクを用いた結合テスト一式を整備する
   - フェイク HTTP サーバ（7800 模擬）による接続待ちリトライ・eval 応答・接続タイムアウト→強制終了経路の検証を実装する
   - status-channel の completed / failed / タイムアウト 3 経路と部分書き込みスキップの結合検証を実装する
   - `check` のプロジェクト無変更検証（クラッシュ復旧を除く）を実装する
@@ -273,8 +273,8 @@
   - _Requirements: 6.4, 6.5, 10.3, 12.3, 12.4_
   - Files: docs/e2e-checklist.md
 
-- [ ] 11. ドキュメントと配布物を整備する
-- [ ] 11.1 (P) 初回セットアップドキュメントを作成する
+- [x] 11. ドキュメントと配布物を整備する
+- [x] 11.1 (P) 初回セットアップドキュメントを作成する
   - Unity アカウント認証（`unity auth login`）を含む初回セットアップ手順を記載する
   - Unity CLI（`com.unity.pipeline`）が experimental であり破壊的変更のリスクがあることを明記する
   - 公式 Unity CLI が未検出の場合のエラーメッセージから参照されるインストール手順を記載する
