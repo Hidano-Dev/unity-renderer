@@ -29,7 +29,7 @@
   - _Requirements: 1.1, 1.2_
   - Files: spike/README.md
 
-- [ ] 2.3 Recorder 駆動と映像書き出しの成立性を実測する
+- [x] 2.3 Recorder 駆動と映像書き出しの成立性を実測する
   - eval 経由でのメモリ上 RecorderTrack / RecorderClip / MovieRecorderSettings 構築と、ドメインリロードを跨いだ各オブジェクトの生存状態を個別に確認する（P-7）。不成立時は Play Mode 突入後の再適用（2 段ペイロード構成）の成立性まで確認する
   - MP4 + MOV(ProRes) の 1 パス同時収録の安定性と Windows での ProRes エンコーダ利用可否・出力ファイル完成条件を確認する（P-3 / P-10）
   - `AsyncGPUReadback.WaitAllRequests()` 同期化の外部（eval）からの設定可否と具体的手段・呼び出し位置・負荷を確認する（P-4）

@@ -101,3 +101,42 @@ git status --short
 ```
 
 UnityTestRunner は本リポジトリに存在しないため、CLI 側の自動検証はルートの `pnpm test` を使用する。P-1〜P-13 は Unity Editor 実機でのみ成立する E2E 項目であり、単体テストの代替にはならない。
+
+## 実測記録（2.3 Recorder 駆動と映像書き出しの成立性）
+
+| 項目 | 内容 |
+|---|---|
+| 実施日時 / 実施者 | 2026-08-23 JST / Codex |
+| Unity Editor / CLI | Unity 6.0.36f1 / Unity CLI（`unity`） |
+| パッケージ | `com.unity.pipeline` 0.5.0-exp.1、`com.unity.recorder` 5.1.0、`com.unity.timeline` 1.7.7 |
+| P-3 / P-10 | 成功。同一 `RecorderController` に MP4 + MOV(ProRes) を登録し、30 fps・0–29 フレームで同時開始。両ファイルが完成 |
+| P-4 | 部分成立。eval から `AsyncGPUReadback.WaitAllRequests()` を呼出し可能。アイドル時 0 ms。実 GPU 負荷は未測定 |
+| P-6 | `unity open` 約 4.4 秒、Pipeline reachable まで約 20.1 秒、Recorder eval 応答約 0.4–0.8 秒、30 フレームのエンコード完了各約 1 秒 |
+| P-7 | 不成立（フォールバック採用）。Play Mode 遷移後のドメインリロードを跨いで in-memory 構成を保持できず、遷移後の再構成で成功 |
+| P-9 | 成功。Recorder 5.1.0 / Pipeline 0.5.0-exp.1 を動作確認。Pipeline 0.2.0 は解決不能 |
+| P-11 | 成功。`EditorApplication.Exit(0)` 後に対象 Pipeline インスタンスが消滅し、保存ダイアログは観測されなかった |
+| 2.3 判定 | 条件付き成立。MP4 + ProRes 同時収録は成立。ドメインリロード対策と実 GPU 負荷計測を後続実装の必須条件とする |
+
+### 2.3 実測ログ
+
+メモリ上の `TimelineAsset`、`RecorderTrack`、`RecorderClip`、`MovieRecorderSettings` を eval_file で生成し、各 `ScriptableObject` に `HideFlags.DontSave` を設定した。Play Mode 中の eval 応答は次のとおりだった。
+
+```text
+track=True;clip=True;settings=True;dontSave=True;recording=True
+```
+
+MP4 単独の完成ファイルは 43,661 bytes、ProRes 単独は 21,357,809 bytes だった。2 つの `MovieRecorderSettings`（MP4 / `ProResEncoderSettings`）を同じ `RecorderControllerSettings` に追加して同時開始し、次の応答とファイルを得た。
+
+```text
+mp4=True;prores=True;recording=True
+spike-recorder-dual-mp4.mp4       43,661 bytes
+spike-recorder-dual-prores.mov    21,357,809 bytes
+```
+
+ProRes は Windows 上で `IsPlatformSupported=True` となり MOV が完成したため、今回の Unity 6.0.36f1 / Recorder 5.1.0 環境ではエンコーダ利用可能と判定した。最小 Scene はカメラを含まないため、映像内容の品質・フレーム欠落は確認対象外とし、出力コンテナの完成性のみを確認した。
+
+P-7 では、Play Mode を要求する eval に `delayCall` で Recorder 構成を続けて適用したが、ドメインリロード後に構成結果を確認できなかった。Play Mode 中に別の eval を送り、同じ構成を再生成・`PrepareRecording`・`StartRecording` すると成功した。実装では Play Mode 遷移完了後に `setup-recorder` を再送する。
+
+P-4 は外部 eval から `AsyncGPUReadback.WaitAllRequests()` を直接呼べることを確認した。実装では Recorder のフレーム監視と組み合わせ、必要な場合に毎フレーム同期する方式を再検証する。
+
+実測に使用した一時パッケージ変更、出力動画、eval 用一時ファイルは実測終了時に削除・復元した。
