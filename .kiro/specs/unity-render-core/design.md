@@ -524,8 +524,8 @@ interface ProjectGuardService {
 
 - `unity open <projectPath>` で Editor を GUI モードで起動する（`-batchmode` / `-nographics` 不使用。7.1）。起動した Editor プロセスの PID を追跡し、強制終了（`taskkill /PID <pid> /T /F`）を常に可能にする
 - 起動後、`http://localhost:7800` へ 2 秒間隔でヘルスチェックを行い、`editorStartSec`（既定 600 秒。パッケージ import・コンパイルを含む）以内に応答がなければプロセスを強制終了して失敗扱い（7.3）
-- eval 送信はコマンドライン長・エスケープ制約を回避するため、ペイロードをセッション一時ファイルに書き出して `eval_file` 相当で送信する `file` トランスポートを第一**候補**とする（暫定決定 P-1。スパイク成功まで採用未確定）。送信方式は `EvalOptions.transport` の判別可能ユニオンで表現する（後述の Service Interface と pipeline-client 契約参照）
-- 完了検知は `status-channel`（C# ペイロードが書き込むステータス JSON ファイルを CLI 側がポーリング。Play Mode 中・ドメインリロード中に HTTP API が応答しない場合でも検知が継続する想定）を**候補**とする（暫定決定 P-2。スパイク成功まで「採用決定」ではなく候補として扱う）。スパイク成功後に以下の契約項目を確定し、`RecordingStatus` / `EditorSession` の契約へ反映する:
+- eval 送信はコマンドライン長・エスケープ制約を回避するため、ペイロードをセッション一時ファイルに atomic write し `eval_file` で送信する `file` トランスポートを既定採用する（P-1）。短い処理のみ inline を許可し、応答受領後（失敗時は finally）に一時ファイルを削除する
+- 完了検知は `status-channel`（C# ペイロードが書き込むステータス JSON ファイルを CLI 側がポーリング）を採用する（P-2 条件付き成立）。JSON は temp→rename の atomic write とし、実装時に Play Mode・ドメインリロード・強制終了の再検証を行う。以下を `RecordingStatus` / `EditorSession` の契約とする:
   - ステータス JSON の atomic write 仕様（C# 側の temp file → rename 可否、部分書き込みの発生条件と CLI 側スキップ規則）
   - 状態遷移（`preparing → recording → completed | failed` の許容遷移と、過去実行の古い status ファイルの識別方法）
   - ステータスが更新不能になった場合のタイムアウト（`recording` のまま `elapsedSec` が進行しない場合の打ち切り条件）
@@ -583,7 +583,7 @@ interface StatusChannel {
 
 **pipeline-client の eval トランスポート契約**:
 
-- `file`（P-1 第一候補）: セッション一時ディレクトリへ `payload-<id>-<連番>.cs` を atomic write（temp → rename）→ HTTP API へ `eval_file` リクエストを送信 → 応答受領後に一時ファイルを削除する（失敗経路でも finally で削除。デバッグモード時のみ調査用に保持）。HTTP リクエストの具体的形式（エンドポイントパス・ファイルパスの渡し方・エラー応答形式）はスパイク P-1 で確定し、本契約へ反映する
+- `file`（P-1 採用）: セッション一時ディレクトリへ `payload-<id>-<連番>.cs` を atomic write（temp → rename）→ `eval_file` リクエスト（`file` + 任意 `timeout`）を送信 → 応答受領後に一時ファイルを削除する（失敗経路でも finally で削除。デバッグモード時のみ保持）
 - 再試行: 接続レベルの失敗（接続拒否・ソケットタイムアウト）のみ 2 秒間隔で最大 3 回再試行する。eval が受理され C# 実行段階で失敗したものは再試行しない（副作用の二重実行防止）。再試行を使い切った送信失敗は `eval-transport-failed`、C# 実行失敗は `eval-failed` に分類する
 - ログ: デバッグモード時にペイロード ID・サイズ・トランスポート種別・HTTP ステータス・応答本文を時系列で出力する（13.2）
 - `inline-split`（P-1 不成立時のフォールバック）: `compile.ts` がテンプレートを「クラス定義ペイロード + 呼び出しペイロード」に分割し、pipeline-client は同一契約（再試行・ログ・エラー分類）で順次 inline 送信する。分割は `csharp-payloads` / `pipeline-client` 内に閉じ、上位層の呼び出しシグネチャ（`eval(payload, options)`）は不変
@@ -593,7 +593,7 @@ interface StatusChannel {
 - Integration: com.unity.pipeline の HTTP API 仕様（エンドポイントパス・リクエスト形式・`eval_file` の受け付け形態）は公式ドキュメントに詳細記載がなく、スパイクで確定する。`pipeline-client.ts` に API 依存を隔離する
 - Validation: 接続確立・eval 応答・終了の各段階でデバッグモード時に Unity Editor ログ（`%LOCALAPPDATA%\Unity\Editor\Editor.log`）の末尾を収集してエラーに添付する（7.3 / 13.2）
 - ポート 7800 は**固定値として確定**する（設定項目 `pipelinePort` は追加しない）。起動前にポート使用チェックを行い、使用中であれば Editor を起動せず即時に `port-conflict` エラーで失敗する（メッセージで「7800 番ポートを使用するプロセス（既存 Editor を含む）の終了」を案内する）。スパイク P-5 でポートの構成可能性は確認するが、構成可能と判明しても初期リリースでは固定運用とする
-- Risks: 衝突時の Editor / CLI の実挙動が未確定（スパイク項目 P-5）
+- Risks: `com.unity.pipeline` は experimental であり、API 変更時は `pipeline-client` の隔離範囲で再検証する
 
 #### csharp-payloads
 
@@ -654,8 +654,8 @@ interface PayloadCompiler {
 
 **Implementation Notes**
 
-- MP4 + MOV(ProRes) の同時 2 形式出力は「1 つの RecorderTrack に形式ごとの RecorderClip を並置し、1 回の Play Mode パスで同時収録する」構成を第一候補とする（暫定決定 P-3）。スパイクで同時収録が不安定と判明した場合は、同一 Editor セッション内で形式ごとに収録パスを分ける逐次方式へフォールバックする（設定スキーマ・Handoff 契約は両方式で不変）
-- Risks: eval に渡せる C# のサイズ・複雑さ制約（スパイク項目 P-1）。制約が厳しい場合、テンプレートを「クラス定義の事前送信 + 呼び出しの分割送信」に分割する（editor-session の `EvalTransport` の `inline-split` に対応。テンプレート分割は `compile.ts` / `pipeline-client` 内に閉じるため上位層に影響しない）
+- MP4 + MOV(ProRes) の同時 2 形式出力は「1 つの RecorderTrack に形式ごとの RecorderClip を並置し、1 回の Play Mode パスで同時収録する」構成を採用する（P-3 / P-10）。P-7 の結果により Play Mode 遷移後に `setup-recorder` を再送する
+- Risks: `AsyncGPUReadback.WaitAllRequests()` の実 GPU 負荷は未測定。実装時はフレーム監視と併用し、負荷または欠落を検知した場合に毎フレーム同期の採否を再判定する（P-4）
 
 ### Orchestration レイヤ
 
@@ -930,10 +930,18 @@ interface HookRegistry {
 | P-9 | `com.unity.recorder` / `com.unity.pipeline` は動作確認済みバージョンをピン止めして一時追加 | 実パッケージバージョンの選定（動作確認した具体バージョン）と Unity 6.x マイナーバージョン間の互換性 | 単一バージョンで互換性が取れない場合は Unity バージョン帯ごとのピン止めバージョン表を project-guard に導入 |
 | P-10 | MovieRecorderSettings は Recorder 既定値をベースに解像度・FPS・範囲を上書き | MP4 / MOV(ProRes) それぞれの具体的な RecorderSettings 設定値、Windows でのエンコーダ有無、解像度・FPS 上書きの適用結果（出力ファイルの実測値で確認） | 適用不能な設定値は設定スキーマから除外または警告に降格し、D-2 の再協議をユーザーに提示 |
 | P-11 | quit-editor は `EditorApplication.Exit(0)` で保存ダイアログを経由せず終了 | GUI Editor での保存確認ダイアログの抑止可否と `EditorApplication.Exit(0)` の実挙動（シーン・アセットがダーティな状態での即時終了） | ダイアログが出る場合は Exit 前にダーティ状態を破棄する処理を追加。それも不可なら強制終了（`taskkill`）を正規の終了経路に昇格し 11.1 の達成手段を再定義 |
-| P-12 | 復元は「バックアップコピーの上書き書き戻し」 | `manifest.json` / `packages-lock.json` 復元中にプロセスが終了した場合の atomicity（部分書き込みファイルが残るか） | 書き戻しを temp file → rename の atomic 方式へ変更し、途中終了時もクラッシュ復旧（session.json `active`）で再復元可能なことを確認 |
-| P-13 | フックは HookPhase（出力検証成功後・Editor 終了前）で発火し、主映像は `formats` 先頭 | `RenderHandoff` の実運用タイミング（出力ファイル確定と Editor 接続維持が両立するか）、複数形式出力時の主映像・追加映像（`videoPath` / `additionalOutputs`）の選択規則の妥当性 | タイミングが成立しない場合はフック地点の再設計（`evalCSharp` 提供可否を含む）を Spec 2 と再協議する（Revalidation Trigger） |
+| P-12 | 復元はバックアップから temp file → rename の atomic 方式 | `manifest.json` / `packages-lock.json` 復元中にプロセスが終了した場合も原本を保持し、`session.json: active` で次回復旧できることを机上検証 | rename 前の temp を破棄して再試行。`active` が残る限り復元未完了として停止・通知 |
+| P-13 | フックは HookPhase（出力検証成功後・Editor 終了前）で発火し、主映像は `formats` 先頭 | 出力検証と Editor 接続維持を両立する状態遷移、および `videoPath` / `additionalOutputs` の選択規則を机上検証。実機 callback は本体実装後に再検証 | フックは一度だけ発火し、失敗しても finally で終了。実機または Spec 2 接続が不成立ならフック地点を再協議 |
 
 **恒常的リスク（スパイクで解消しないもの)**: `com.unity.pipeline` は beta / experimental であり破壊的変更リスクが恒常的に残る。`docs/setup.md` に明記し（1.4）、`pipeline-client.ts` への API 依存隔離と CLI バージョン検出で影響範囲を限定する。
+
+### 2.4 判定の反映
+
+スパイクの総合判定は **条件付き GO** とする。P-1〜P-13 の結果、MP4 + MOV(ProRes) の 1 パス収録、`eval_file` トランスポート、7800 固定、Recorder 5.1.0 / Pipeline 0.5.0-exp.1、P-7 の 2 段ペイロード、P-12 の atomic 復元、P-13 の HookPhase 契約を採用する。P-2 の status writer、P-4 の実 GPU 負荷、P-6 の長尺・コールドスタート、P-13 の実機 callback は実装時の再検証ゲートとして残す。
+
+P-12 の復元実装は `session.json` を先に `active` として保存し、各バックアップを同一ディレクトリ内の temp file へ書いて rename する。全ファイルの復元成功後だけセッションを完了扱いにして削除する。P-13 の `HookPhase` は出力存在・サイズ > 0 の検証直後、`requestQuit` 前に一度だけ発火し、`formats[0]` を `videoPath`、残りを `additionalOutputs` とする。フックの成否にかかわらず Editor 終了を finally で実行する。
+
+ユーザー承認状態は `spike/README.md` に **承認待ち (pending user approval — unattended run)** と記録する。無人実行では承認済みへ変更せず、承認完了まではタスク 3 以降の実装を開始しない。P-3 の再現不能、P-13 callback の不成立、または再検証で出力確定条件が崩れた場合は NO-GO として代替方式を再要件化する。
 
 ## Supporting References
 

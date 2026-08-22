@@ -1,6 +1,6 @@
 # Unity 6 検証スパイク計画
 
-このディレクトリは unity-render-core の実機検証（Requirement 1.1–1.2、`URC-1.1`、`URC-1.2`）を行うための再現可能な計画とテストプロジェクトを管理する。実測前の判定は **未実施** とし、P-1〜P-13 の結果、ログ、実行日時、Unity/パッケージのバージョン、ユーザー承認をこのファイルに追記する。
+このディレクトリは unity-render-core の実機検証（Requirement 1.1–1.2、`URC-1.1`、`URC-1.2`）を行うための再現可能な計画とテストプロジェクトを管理する。初期計画では判定を **未実施** とし、P-1〜P-13 の結果、ログ、実行日時、Unity/パッケージのバージョン、ユーザー承認をこのファイルへ記録する。
 
 ## 実行環境
 
@@ -95,7 +95,7 @@ P-3、P-4、P-6、P-7、P-9〜P-13 は後続タスクで実測する。P-3 の�
 ```powershell
 unity auth login
 unity editors -i
-unity open --path "$pwd\spike\unity-project"
+unity open --path "$pwd\spike\unity-project" --editor-version 6000.0.36f1
 # Editor 起動後、Unity Pipeline の localhost:7800 を対象に P-1 を実施
 git status --short
 ```
@@ -140,3 +140,37 @@ P-7 では、Play Mode を要求する eval に `delayCall` で Recorder 構成�
 P-4 は外部 eval から `AsyncGPUReadback.WaitAllRequests()` を直接呼べることを確認した。実装では Recorder のフレーム監視と組み合わせ、必要な場合に毎フレーム同期する方式を再検証する。
 
 実測に使用した一時パッケージ変更、出力動画、eval 用一時ファイルは実測終了時に削除・復元した。
+
+## 実測記録（2.4 GO/NO-GO 判定）
+
+### P-12 / P-13 の判定
+
+P-12 は復元処理の設計契約を机上検証した。バックアップから `*.restore.tmp` へ書き込み、同一ディレクトリ内で rename してから `manifest.json` / `packages-lock.json` を置換する方式なら、プロセスが rename 前に終了しても原本は残る。`session.json` を先に `status: "active"` で atomic write し、復元成功後にのみ `restored` として削除するため、次回起動は `active` を未復旧として検出できる。判定は **採用（atomic restore + active session recovery）** とする。Unity Editor を必要としないため、実装前の机上検証として成立した。
+
+P-13 は `scene-job` の状態遷移と既存の `RenderHandoff` 契約を照合した。出力の存在・サイズ > 0 検証を成功条件にし、検証直後かつ `requestQuit` 前に HookPhase を 1 回だけ発火することで、Editor 接続を維持したまま `formats[0]` を `videoPath`、`formats[1..]` を `additionalOutputs` に固定できる。フック失敗時も `finally` の終了処理へ収束する。現時点では本体実装と Spec 2 の受け側が未着手のため、Unity 実機での callback 発火は **未実測**。実装時の結合テストおよび Spec 2 接続確認を必須の再検証条件とする。判定は **設計採用（実機再検証 pending）** とする。
+
+### P-1〜P-13 確定結果総括
+
+| ID | 確定結果 | 採用方針 / 残条件 |
+|---|---|---|
+| P-1 | 成功 | 長い C# は一時 `.cs` + `eval_file`、短い処理のみ inline。応答後に一時ファイルを削除 |
+| P-2 | 条件付き成立 | Play Mode 中の eval は成立。status writer の atomicity と強制終了復旧は実装時に検証し、atomic JSON + stale-run 識別を採用 |
+| P-3 | 成功 | MP4 + MOV(ProRes) を同一 RecorderController の 1 パスで収録 |
+| P-4 | 部分成立 | `WaitAllRequests()` 呼出しは成立。実 GPU 負荷は未測定のため、フレーム監視と併用して実装時に再検証 |
+| P-5 | 成功 | 7800 固定、起動前に占有 PID/既存 Editor を検査し `port-conflict` で停止 |
+| P-6 | 条件付き成立 | 動的タイムアウトは係数 3 + マージン 180 秒を採用。起動/接続約 20.1 秒、録画完了約 1 秒の実測を根拠とし、実装時に長尺・コールドスタートを再計測 |
+| P-7 | 成功（フォールバック） | ドメインリロード後に `setup-recorder` を再送する 2 段ペイロードを必須化 |
+| P-8 | 成功 | `unity editors -i` の表形式行パーサを採用 |
+| P-9 | 成功 | Unity 6.0.36f1 + Recorder 5.1.0 + Pipeline 0.5.0-exp.1 を固定。Pipeline 0.2.0 は解決不能 |
+| P-10 | 成功 | 30 fps・0–29 フレームで MP4/MOV の指定が反映され、両コンテナが完成 |
+| P-11 | 成功 | `EditorApplication.Exit(0)` を通常終了経路として採用 |
+| P-12 | 成功（机上検証） | temp→rename の atomic 復元と `session.json: active` の次回復旧を採用 |
+| P-13 | 条件付き成立（机上検証） | 出力検証後・終了前の一意な HookPhase を採用。実装時の callback/Spec 2 接続検証が必須 |
+
+### 2.4 GO/NO-GO 判定
+
+総合判定は **条件付き GO** とする。P-3 の MP4 + MOV(ProRes) 書き出しは成立し、P-1、P-5、P-8〜P-11 も採用可能な結果を得た。P-2、P-4、P-6、P-12、P-13 に残る未実測部分は、上表のフォールバック・再検証条件を実装ゲートとして design.md に反映した。P-13 の実機 callback 検証と実 GPU 負荷計測が不成立、または P-3 の実出力が再現不能となった場合は直ちに **NO-GO** とし、後続実装を停止して代替方針を再要件化する。
+
+ユーザー承認: **承認待ち (pending user approval — unattended run)**。本タスクは無人実行のため承認を取得しておらず、承認済みとは扱わない。承認完了まではタスク 3 以降に着手しない。
+
+なお、本実行時の `spike/unity-project/ProjectSettings/ProjectVersion.txt` は 6000.0.23f1 であり、指定された 6000.0.36f1 と一致しなかったため、追加の Unity 起動・再実測は行っていない。Unity を再実行する場合は、ProjectVersion.txt と一致する明示的な `--editor-version` を使用する。
