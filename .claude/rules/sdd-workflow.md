@@ -35,6 +35,7 @@ Kiro-style Spec-Driven Development on an agentic SDLC
 - Progress check: `/kiro:spec-status {feature}` (use anytime)
 
 ## Development Rules
+- Validate 系タスク（`/kiro:validate-gap` / `/kiro:validate-design` / `/kiro:validate-impl`）は Claude サブエージェントではなく **Codex に委譲**する（`codex:codex-rescue` 経由・read-only 指定。詳細は各コマンド定義）。Codex が利用不可の場合のみ従来の validate-*-agent にフォールバックし、その旨を報告する
 - 3-phase approval workflow: Requirements → Design → Tasks → Implementation
 - Human review required each phase; use `-y` only for intentional fast-track
 - Keep steering current and verify alignment with `/kiro:spec-status`

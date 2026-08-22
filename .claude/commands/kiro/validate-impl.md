@@ -26,11 +26,40 @@ argument-hint: [feature-name] [task-numbers]
 **If both provided** (`$1` and `$2` present):
 - Pass directly to Subagent without detection
 
-## Invoke Subagent
+## Invoke Codex (primary)
 
-Delegate validation to validate-impl-agent:
+**Validation runs on Codex, not on a Claude subagent** (user policy). Perform the auto-detection above in the main session first, then delegate via the `codex:codex-rescue` subagent, which forwards the task to the Codex CLI runtime. The task MUST be explicitly read-only (validation never edits files; テスト・ビルド等の検証コマンドの実行は可).
 
-Use the Task tool to invoke the Subagent with file path patterns:
+```
+Task(
+  subagent_type="codex:codex-rescue",
+  description="Codex impl validation",
+  prompt="""
+Read-only で以下の実装検証を実施してほしい。ファイル編集は一切禁止（テスト・ビルド・lint 等の検証コマンド実行と診断のみ）。
+
+Feature: {$1 or auto-detected}
+Target tasks: {$2 or auto-detected}
+Mode: {auto-detect, feature-all, or explicit}
+
+読むべきファイル:
+- .kiro/specs/{feature}/*.{json,md}（requirements.md / design.md / tasks.md）
+- .kiro/steering/*.md
+- 対象タスクが変更した実装・テストコード一式
+
+実装を requirements / design / tasks と突き合わせて検証し、日本語で構造化レポートを返すこと:
+- 総合判定（GO / NO-GO）
+- タスクごとの検証結果（要件充足・design 逸脱・テスト有無と結果）
+- 指摘一覧（CRITICAL / MINOR に分類し、修正方針を添える）
+- 実行した検証コマンドとその出力要約
+"""
+)
+```
+
+Apply any resulting fixes via the implementation flow (`/kiro:spec-impl` 等) in the main session — Codex の検証実行自体はファイルを変更しない.
+
+### Fallback (Codex unavailable)
+
+If the Codex invocation fails or returns nothing (Codex CLI 未セットアップ・usage-limit 等), fall back to the original Claude subagent and note the fallback in the result:
 
 ```
 Task(
