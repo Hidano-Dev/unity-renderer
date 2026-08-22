@@ -144,7 +144,7 @@
   - _Boundary: csharp-payloads/open-scene_
   - Files: src/csharp-payloads/templates/open-scene.cs, tests/csharp-payloads/open-scene.test.ts
 
-- [ ] 6.3 (P) メモリ上 Recorder 構成ペイロードを実装する
+- [x] 6.3 (P) メモリ上 Recorder 構成ペイロードを実装する
   - RecorderTrack / RecorderClip / MovieRecorderSettings をメモリ上のみで構築し（DontSave・AssetDatabase 非登録）、アセットとして保存しない
   - 設定された解像度・出力フォーマット（スパイクで確定した同時収録 or 逐次方式）・確定済み出力パスを適用し、Timeline 実効フレームレートを一時上書きし、イン/アウト点を記録範囲に設定する
   - AsyncGPUReadback 同期化をスパイクで確定した手段で常時有効化し、音声収録を無効化する
