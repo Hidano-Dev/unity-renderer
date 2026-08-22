@@ -166,7 +166,7 @@ src/audio-remux/
 tests/audio-remux/            # vitest（src/audio-remux とミラー構成）
 spike/
 └── timeline-audio/
-    └── README.md             # 検証スパイク（Requirement 12 / Q-1〜Q-10）の実装ゲート文書
+    └── README.md             # 検証スパイク（Requirement 12 / Q-1〜Q-11）の実装ゲート文書
 ```
 
 ### Modified Files
@@ -176,6 +176,8 @@ spike/
 - `src/shared/paths.ts`（core）— `%LOCALAPPDATA%\unity-render-core\tools\` の解決関数を追加（sessions と別系統）
 
 > core 側 3 ファイルの変更はいずれも既存契約のシェイプを変えない追加のみ。`RenderHooks` / `HookContext` / `RenderHandoff` 型には一切手を入れない。
+>
+> **条件付き追加変更の可能性**: 「core 側変更は上記 3 ファイルのみ」は、core の既存 reporting（`SceneResult.outputs` / `hook-failed` / 成否一覧 / 終了コード）が追加変更なしで「映像成功・音声失敗」を表現できること（8.6 AC）を前提とする。この前提は Integration Tests の項目 5 で検証し、満たせない場合は必要な core 側 reporting/型の変更ファイルを本節に追記して tasks に反映する。
 
 ## System Flows
 
@@ -266,7 +268,7 @@ flowchart TD
 | 9.1–9.4 | 最終成果物の生成・出力別独立 mux・0 件スキップ | output/finalize, index | `finalizeOutput`, `OutputMuxStatus` | afterRecording シーケンス |
 | 10.1–10.6 | 音源欠落・抽出失敗・ffmpeg 失敗時の保全 | metadata/load, types, output/finalize | `AudioRemuxHookError` | afterRecording シーケンス |
 | 11.1–11.3 | デバッグモードのログ・成果物保持 | ffmpeg/run, output/finalize, index | `ctx.logger.debug` 経由 | — |
-| 12.1–12.3 | Timeline 固有の検証スパイク | spike/timeline-audio | Q-1〜Q-10（Research Needed 節） | — |
+| 12.1–12.3 | Timeline 固有の検証スパイク | spike/timeline-audio | Q-1〜Q-11（Research Needed 節） | — |
 
 ## Components and Interfaces
 
@@ -347,7 +349,7 @@ class AudioRemuxHookError extends Error {
 
 - Integration: core の `SceneFailureReason: "hook-failed"` と `SceneResult.outputs`（映像パスは記録済み）の組で「映像成功・音声失敗」が表現される。core の reporting 表示文言の調整が必要な場合は core 側の軽微変更として tasks で扱う
 - Validation: フェーズごとの経過を `ctx.logger.debug` に記録し、失敗時にどのフェーズで停止したかを特定可能にする
-- Risks: フック実行時間（長尺映像の mux）が core 側の Scene 処理時間に加算される。mux タイムアウトは `ceil((outPoint − inPoint) × 2) + 120` 秒/出力とする（暫定。スパイク Q-9 実測で調整）
+- Risks: フック実行時間（長尺映像の mux）が core 側の Scene 処理時間に加算される。mux タイムアウトは `ceil((outPoint − inPoint) × 2) + 120` 秒/出力とする（**スパイク完了まで暫定値**。Q-9 の実測結果を反映するまで timeout 式を実装契約として固定しない）
 
 #### extract
 
@@ -412,6 +414,8 @@ interface ExtractService {
 | 子 Timeline 解決 | `ControlPlayableAsset.sourceGameObject.Resolve(director)` → `GetComponent<PlayableDirector>()` → `.playableAsset as TimelineAsset` | 解決不能は warning でスキップ（1.4） |
 | ControlClip timeScale | `TimelineClip.timeScale`（ControlTrack 上のクリップ） | — |
 
+> **注記（Q-3/Q-4 確定手順）**: クリップ音量・トラック音量・階層ミュートの API 経路は、スパイク Q-3/Q-4 完了後に「採用 API（公開 API / SerializedObject fallback のいずれを正式経路とするか）・対応 Unity/Timeline パッケージのバージョン範囲・SerializedObject fallback の安定性（シリアライズ名の互換性）」を本表を更新する形で表として確定する。確定までは本表全体を暫定として扱う。
+
 **Implementation Notes**
 
 - Integration: `injectParams` は core `csharp-payloads/compile.ts` から export される汎用関数を利用（Modified Files 参照）。eval トランスポート（file / inline-split）は core の `evalCSharp` 内部に隠蔽されており本 Spec は関知しない
@@ -431,6 +435,7 @@ interface ExtractService {
 - 固定ファイル名: `timeline-audio-metadata.json`（sessionDir 直下）。**sessionDir 利用契約**（8.2 の確定事項）:
   - sessionDir は core が Scene ジョブ開始時に用意し、バッチ終了時（endSession）まで保持する。フック実行中の削除はない
   - デバッグモード時は core の既存規約（デバッグ時成果物保持）に従い sessionDir 内容が保持される（11.3 はこれに乗る）
+  - 固定ファイル名の世代識別は、core の「**sessionDir は Scene 実行ごとに一意**」という前提に依存する（同一 sessionDir が再利用されない限り、固定名でも別実行の JSON を誤読しない）。この前提が崩れる場合（sessionDir 再利用の導入等）は、実行 ID を JSON に含めて読み込み時に照合する方式へ移行する
   - 本契約は core 側 Revalidation Trigger（sessionDir 運用変更）とペアで維持する
 - 検証順序: JSON パース → zod スキーマ検証（3.2）→ `schemaVersion` 一致確認 → `errors` 配列の空確認 → 全クリップの `sourcePath` 存在確認（10.1）。いずれかの失敗で mux を開始せず、不適合箇所（zod issue パス / 欠落ファイルパスとクリップ ID）を含むエラーを返す（3.3 / 10.1: 欠落音源を黙って除外した部分ミックスは作らない）
 
@@ -548,7 +553,7 @@ interface MixPlanner {
 
 **Responsibilities & Constraints**
 
-- **ピン止めマニフェスト（決定）**: BtbN FFmpeg-Builds の**特定リリースタグ**（latest ではなく `autobuild-YYYY-MM-DD-HH-MM` 形式の恒久タグ）の `ffmpeg-nX.Y-…-win64-lgpl.zip` を採用する。URL・SHA-256・ffmpeg バージョンをコード内定数 `FfmpegManifest` として保持する（5.1 / D-4）。具体タグ・ハッシュの確定はスパイク Q-8（実バイナリでの smoke + フィルタ/コーデック確認とセット）
+- **ピン止めマニフェスト（暫定 — スパイク Q-8 ゲート）**: BtbN FFmpeg-Builds の**特定リリースタグ**（latest ではなく `autobuild-YYYY-MM-DD-HH-MM` 形式の恒久タグ）の `ffmpeg-nX.Y-…-win64-lgpl.zip` を採用する。URL・SHA-256・ffmpeg バージョンをコード内定数 `FfmpegManifest` として保持する（5.1 / D-4）。具体タグ・ハッシュの確定はスパイク Q-8（実バイナリでの smoke + フィルタ/コーデック確認とセット）。**具体タグ・SHA-256・ffmpegVersion を含む `FfmpegManifest` の内容はスパイク完了まで暫定値として扱い、Q-8 の実測結果を反映するまで実装契約として固定しない**
   - LGPL ビルド選定理由: 本機能が必要とするのは native AAC エンコーダ・PCM・libavfilter の標準フィルタのみで、GPL 限定コンポーネント（libx264 等）を使わない。ダウンロード方式のため再配布義務自体が発生しないが、ビルド種別としてもリスクの低い側に倒す
 - **管理ディレクトリ（決定）**: `%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\<buildId>\`（`buildId` 例: `btbn-autobuild-2026-07-31-win64-lgpl`）。sessions とは別系統で、バージョン更新時は新 `buildId` ディレクトリが並存する（旧版の自動削除はしない。5.7）
 - 取得手順（5.7 / ffmpeg 取得フロー参照）: 一時ファイルへ DL → SHA-256 検証 → `tools\ffmpeg\.staging-<random>\` へ展開 → `ffmpeg.exe -version` smoke → `<buildId>` へ atomic rename → `install-info.json` 記録。途中失敗時は staging を削除し、`<buildId>` ディレクトリの存在 = 有効化完了の不変条件を保つ
@@ -617,20 +622,22 @@ interface FfmpegProvider {
 
 **Responsibilities & Constraints**
 
+> **暫定値の扱い（スパイクゲート）**: 以下の変速フィルタ・ミックス方式・コーデックマトリクスはスパイク完了まで暫定値として扱う。Q-7〜Q-11 の実測結果を反映するまで、`pitchMode` 既定値、`normalize=0` の採否、`FfmpegManifest`、codec matrix、timeout 式を実装契約として固定しない。
+
 - **filter graph 構成（クリップごと）**: 入力 `i`（ループクリップは `-stream_loop -1` を入力オプションに付与。4.6 / D-2）に対し
   `atrim=start=<trimStart>:end=<trimEnd>` → `[speed ≠ 1 のとき変速フィルタ]` → `aformat=sample_rates=48000:channel_layouts=stereo`（モノラル音源のステレオ正規化）→ `volume=<gain>` → `adelay=<delaySamples>S:all=1` → ラベル `[a<i>]`
-- **変速フィルタ（暫定 — スパイク Q-7 ゲート）**: Unity Timeline のクリップ再生速度・ControlClip timeScale は AudioSource の pitch 変更として実装されており**ピッチが変動する**、という仮説を第一候補とし、`asetrate=48000*<v>,aresample=48000`（ピッチ変動あり）を既定とする。Q-7 の実測でピッチ非変動と判明した場合は `atempo` チェーン（0.5–2.0 範囲外は多段接続）へ切り替える。`buildFilterGraph(plan, pitchMode)` の `pitchMode: "resample" | "preserve-pitch"` で両実装を持ち、既定値のみをスパイク結果で確定する
-- **ミックス**: `amix=inputs=<N>:normalize=0:duration=longest`（4.1）。`normalize=0` は Unity の加算ミックス挙動（自動音量正規化なし）に一致させるための決定。クリッピングは Unity 再生時と同条件で発生し得るものとして抑制処理を入れない。その後 `apad=whole_dur=<outDur>` + `atrim=0:<outDur>` でストリーム長を確定 → `[mix]`
+- **変速フィルタ（暫定 — スパイク Q-7 ゲート）**: Unity Timeline のクリップ再生速度・ControlClip timeScale は AudioSource の pitch 変更として実装されており**ピッチが変動する**、という仮説を第一候補とし、`asetrate=48000*<v>,aresample=48000`（ピッチ変動あり）を既定とする。Q-7 の実測でピッチ非変動と判明した場合は `atempo` チェーン（0.5–2.0 範囲外は多段接続）へ切り替える。`buildFilterGraph(plan, pitchMode)` の `pitchMode: "resample" | "preserve-pitch"` で両実装を持ち、既定値のみをスパイク結果で確定する。**`pitchMode` 既定値はスパイク完了まで暫定値であり、Q-7 の実測結果を反映するまで実装契約として固定しない**
+- **ミックス（暫定 — スパイク Q-11 ゲート）**: `amix=inputs=<N>:normalize=0:duration=longest`（4.1）。`normalize=0` が Unity の加算ミックス挙動（自動音量正規化なし）と一致するというのは**実測未検証の仮説**であり、スパイク Q-11（Unity Editor 実再生波形との比較）で検証するまで暫定値として扱う。一致しない場合はゲイン計算またはミックス方式を再決定する。クリッピングは Unity 再生時と同条件で発生し得るものとして抑制処理を入れない（Q-11 の検証項目に含む）。その後 `apad=whole_dur=<outDur>` + `atrim=0:<outDur>` でストリーム長を確定 → `[mix]`
 - filter graph は Windows のコマンドライン長制限を回避するため常に `-filter_complex_script <sessionDir>\audio-mix.filter` で渡す（クリップ数非依存）
 - **mux コマンド形（6.1 / 6.3）**: `ffmpeg -y -i <video> [入力群] -filter_complex_script <script> -map 0:v:0 -map "[mix]" -c:v copy <コーデック引数> <一時出力>`。映像ストリームは常に `-c:v copy`（再エンコードなし。6.3）
-- **コーデックマトリクス（6.4 / D-6 の確定）**:
+- **コーデックマトリクス（6.4 / D-6 — スパイク完了まで暫定値）**:
 
 | 出力コンテナ | 音声コーデック | サンプルレート | 量子化/ビットレート | チャンネル | 追加フラグ |
 |---|---|---|---|---|---|
 | MP4 | AAC-LC（ffmpeg native `aac`） | 48000 Hz | 256 kbps | stereo | `-movflags +faststart` |
 | MOV(ProRes) | `pcm_s24le`（非圧縮 24bit。編集用途の定石） | 48000 Hz | 24bit | stereo | — |
 
-  設定項目にはしない（D-6）。中間処理は 48000 Hz / stereo / float で統一する
+  設定項目にはしない（D-6）。中間処理は 48000 Hz / stereo / float で統一する。**本マトリクスはスパイク完了まで暫定値として扱い、Q-8（同ビルドでのコーデック動作確認）・Q-9（実 Recorder 出力での mux 成立確認）の実測結果を反映するまで実装契約として固定しない**
 - 実行はツール管理（または manual）の ffmpeg のみを使用し（5.2）、Unity Editor プロセスに依存しない（6.5）
 - デバッグモード時: 実行コマンドライン全文と stderr 全文を `logger.debug` へ出力し、`<sessionDir>\ffmpeg-<format>.log` にも保存する（11.1）。非デバッグ時は stderr を失敗時のエラー要約（末尾抜粋）にのみ使用する（11.2）
 
@@ -821,11 +828,12 @@ interface ExtractionWarning {
 2. 2 出力独立 mux: MP4 成功 + MOV 失敗で MP4 確定・MOV 無音保全・`category: "mux"` reject（9.2）
 3. ffmpeg/run ⇄ フェイク ffmpeg.exe（引数記録スクリプト）: コマンドライン組み立て（`-c:v copy`・コーデックマトリクス・`-filter_complex_script`）、タイムアウト強制終了、デバッグログ収集
 4. acquire の並行 2 プロセス相当（ロック直列化）シミュレーション
+5. **core 失敗報告契約の検証（8.6 AC 対応）**: `AudioRemuxHookError` reject 時に、core の `SceneResult.outputs`・`SceneFailureReason: "hook-failed"`・reporting（成否一覧表示）・プロセス終了コードが**追加変更なしで**「映像成功・音声失敗」を表現できることを integration test で確認する。確認できない場合は、必要な core 側 reporting/型変更を Modified Files に明記したうえで tasks に反映する
 
 ### E2E（実 Unity + 実 ffmpeg、CI 対象外）
 
-1. 検証スパイク（Requirement 12 / Q-1〜Q-10）を実 Unity 6 プロジェクトで実施し `spike/timeline-audio/README.md` に記録
-2. 同期精度検証（7.4）: クリックトラック用テストアセット（既知位置の短音 + ネスト/変速/ループ構成）を書き出し、ffprobe でストリーム長差 ≤ 0.5 フレームを確認、波形解析でクリック位置誤差を実測
+1. 検証スパイク（Requirement 12 / Q-1〜Q-11）を実 Unity 6 プロジェクトで実施し `spike/timeline-audio/README.md` に記録
+2. 同期精度検証（7.4）: クリックトラック用テストアセット（既知位置の短音 + ネスト/変速/ループ構成）を書き出し、ffprobe でストリーム長差 ≤ 0.5 フレームを確認、波形解析でクリック位置誤差を実測。**必須シナリオ**として「ループ × 変速 × clipIn × イン点途中開始」を同時に満たす複合ケース（ループクリップに clipIn と速度変更を設定し、イン点がクリップ再生中に位置する構成）を含める（7.2 / 4.5 / 4.6 の複合検証）
 3. `/kiro:validate-impl` 手動シナリオ: MP4+MOV 2 出力の音声合成一括、音源 1 件を意図的に欠落させた「映像成功・音声失敗」の成否一覧確認、オフライン状態での初回実行（acquire 失敗メッセージと manual 配置での復旧）
 4. **Unity 実機依存項目の分離**: 全階層走査・属性 API・ピッチ実挙動・ExposedReference 解決は Unit / Integration で検証不能であり、スパイク + 本 E2E の明示的な前提条件とする（core 規約踏襲）
 
@@ -845,7 +853,7 @@ interface ExtractionWarning {
 
 - 中間処理は 48 kHz / stereo / float 固定で、クリップ数 N に対し filter graph は線形に伸びる。`-filter_complex_script` 採用によりコマンドライン長制限（Windows 32K）の影響を受けない
 - 既知の非効率: ループクリップの `-stream_loop` + filter 内 `atrim` は先頭からのデコードを伴う。非ループクリップの入力側 `-ss` 高速シーク、ループの `aloop`（サンプル単位）への切り替えは、正しさの実測（スパイク Q-9）後の将来最適化とする
-- mux は映像再エンコードなし（`-c:v copy`）のため所要時間は音声処理 + コンテナ書き換えのみ。タイムアウト既定 `ceil(outDur × 2) + 120` 秒/出力（暫定・Q-9 実測で調整）
+- mux は映像再エンコードなし（`-c:v copy`）のため所要時間は音声処理 + コンテナ書き換えのみ。タイムアウト既定 `ceil(outDur × 2) + 120` 秒/出力（スパイク完了まで暫定値。Q-9 の実測結果を反映するまで実装契約として固定しない）
 
 ## Research Needed / スパイク依存の暫定決定
 
@@ -854,7 +862,8 @@ Requirement 12 の Timeline 固有検証スパイクは**実装着手前の必�
 **実装ゲート（必須・NO-GO 規則）**:
 
 - Q-1〜Q-6（抽出成立性）のいずれかが不成立の場合、後続タスクの実装に進まず、代替方針の再検討をユーザーに提示する（12.3。NO-GO）
-- Q-7〜Q-10 は design 確定項目（フィルタ選定・マニフェスト・実測値）のゲートであり、確定結果を本設計へ反映してから該当コンポーネントの実装に着手する
+- Q-7〜Q-11 は design 確定項目（フィルタ選定・ミックス方式・マニフェスト・実測値）のゲートであり、確定結果を本設計へ反映してから該当コンポーネントの実装に着手する。特に Q-11（ミックス同等性）は **design 確定の NO-GO ゲート**とし、実測で同等性を確認（または方式を再決定して設計へ反映）するまでミックス方式を確定扱いにしない
+- 本文中の `pitchMode` 既定値・`normalize=0` の採否・`FfmpegManifest`・codec matrix・timeout 式はスパイク完了まで暫定値であり、Q-7〜Q-11 の実測結果を反映するまで実装契約として固定しない（該当各節に同旨を明記済み）
 - スパイクは core のスパイク環境（実 Unity 6 プロジェクト + eval 経路）を前提とするため、core P-1（eval 送信）成立後に実施する
 
 | ID | 暫定決定 | スパイクで確認する内容 | 不成立時のフォールバック |
@@ -869,8 +878,9 @@ Requirement 12 の Timeline 固有検証スパイクは**実装着手前の必�
 | Q-8 | ffmpeg は BtbN FFmpeg-Builds の恒久タグ `win64-lgpl` zip をピン止め | 具体タグ・URL・SHA-256 の確定、native AAC / pcm_s24le / 必要フィルタ（amix, adelay サンプル指定, atrim, asetrate, atempo, aresample, aformat, apad, volume）の同ビルドでの動作、LICENSE.txt 同梱内容とライセンス義務の最終確認（5.4） | LGPL ビルドで不足があれば `win64-gpl` へ変更（ダウンロード方式のため再配布義務は同様に非該当。記録方式は不変）。BtbN 不安定なら gyan.dev release ビルドへ変更 |
 | Q-9 | Recorder 出力の MP4 / MOV(ProRes) へ `-c:v copy` + コーデックマトリクスで mux が成立する | 実 Recorder 出力ファイルでの mux 成功、faststart の効果、ストリーム長差の実測（7.4 の許容誤差検証）、mux 所要時間（タイムアウト式の係数調整） | コンテナ互換問題があれば当該コンテナのみ remux オプション調整（例: タイムスケール指定）。ProRes + AAC 等の組合せ変更は D-6 の再協議 |
 | Q-10 | 時間正規化ステップ 1–2（祖先累積式）が Unity 実挙動と一致する | ネスト 2 段 + timeScale 0.5/2.0 + ControlClip clipIn ありの構成で、実再生の発音タイミングと式の算出値の一致（2.3 / D-5）。祖先可視窓クランプの実挙動 | 式が実挙動と乖離した場合は C# 実装（extract 内）を実測に合わせて修正。スキーマ・TS 側は不変 |
+| Q-11 | `amix=normalize=0` が Unity の加算ミックス挙動と同等である（**仮説**） | Unity Editor 上で複数音源（音量差・重なりあり）を同時再生した基準波形・ピーク値・クリッピング挙動を採取し、同一構成の ffmpeg 出力波形と比較して同等性を実測する（4.1） | 結果が一致しない場合はゲイン計算（クリップ/トラック音量の畳み込み式）またはミックス方式（amix パラメータ・別フィルタ構成）を再決定し、本設計へ反映する。design 確定ゲート（NO-GO）対象 |
 
-**スパイク後に本設計へ反映する項目**: Q-3/Q-4 の API マッピング表確定、Q-7 の `pitchMode` 既定値、Q-8 の `FfmpegManifest` 定数、Q-9 のタイムアウト係数と 7.4 実測値。反映完了を該当コンポーネント実装タスクの開始条件とする。
+**スパイク後に本設計へ反映する項目**: Q-3/Q-4 の API マッピング表確定（採用 API・対応 Unity/Timeline バージョン範囲・SerializedObject fallback の安定性）、Q-7 の `pitchMode` 既定値、Q-8 の `FfmpegManifest` 定数、Q-9 のタイムアウト係数と 7.4 実測値、Q-11 のミックス方式（`normalize=0` の採否またはゲイン計算/方式の再決定）。反映完了を該当コンポーネント実装タスクの開始条件とする。
 
 ## Supporting References
 
