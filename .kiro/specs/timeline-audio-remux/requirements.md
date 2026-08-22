@@ -5,13 +5,13 @@ timeline-audio-remux: Timeline（ControlTrack による入れ子構造を含む�
 
 ## Introduction
 
-timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構造を含む）のすべての AudioTrack から再生情報を eval 実行の C# で抽出し、unity-render-core が書き出した無音の映像ファイルに対し、同梱 ffmpeg で複数音源をブレンドして合成（mux）する機能である。Unity Editor 再生時の音は必ずミリ秒単位でランダムにズレる（per plan G-10。発案者の実証記事に基づく）ため、音声は Unity Recorder では収録せず、Timeline の再生情報から外部で正確に再構築する。これが本ツールの核心的差別化機能である。
+timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構造を含む）のすべての AudioTrack から再生情報を eval 実行の C# で抽出し、unity-render-core が書き出した無音の映像ファイルに対し、ツール管理の ffmpeg（初回自動ダウンロード。see D-3）で複数音源をブレンドして合成（mux）する機能である。Unity Editor 再生時の音は必ずミリ秒単位でランダムにズレる（per plan G-10。発案者の実証記事に基づく）ため、音声は Unity Recorder では収録せず、Timeline の再生情報から外部で正確に再構築する。これが本ツールの核心的差別化機能である。
 
 本書の主語 "timeline-audio-remux モジュール" は、unity-render-core と同一コードベース・同一 .exe に組み込まれる本機能の実装一式（TypeScript 実装、およびフック経由で Editor 内に送り込み実行させる音声情報抽出用 C# コードを含む）を指す。
 
 ## Boundary Context
 
-- **In scope**: eval で実行する音声情報抽出 C#（ルート Timeline から ControlTrack を再帰的に辿る全階層 AudioTrack の走査、音源アセット元ファイルパス・ルート Timeline 基準絶対開始時刻・clipIn・音量の抽出、JSON 出力）、音声メタデータ JSON スキーマの定義（本 Spec 側の責務）、複数音源同時再生のブレンド／ミックス、同梱 ffmpeg による配置・ミックス・映像への mux、イン点／アウト点指定時の音声切り出し整合、ffmpeg のツール同梱（PATH 非依存）、デバッグモード時の ffmpeg ログ出力、unity-render-core のフック（RenderHooks / HookContext / RenderHandoff）との統合、最終成果物（音声合成済み映像）の生成、エラー処理（音源ファイル欠落・抽出失敗・ffmpeg 失敗時の挙動）。
+- **In scope**: eval で実行する音声情報抽出 C#（ルート Timeline から ControlTrack を再帰的に辿る全階層 AudioTrack の走査、音源アセット元ファイルパス・ルート Timeline 基準絶対開始時刻・clipIn・音量の抽出、JSON 出力）、音声メタデータ JSON スキーマの定義（本 Spec 側の責務）、複数音源同時再生のブレンド／ミックス、ツール管理 ffmpeg による配置・ミックス・映像への mux、イン点／アウト点指定時の音声切り出し整合、ffmpeg の初回自動ダウンロードと管理（PATH 非依存。see D-3/D-4）、デバッグモード時の ffmpeg ログ出力、unity-render-core のフック（RenderHooks / HookContext / RenderHandoff）との統合、最終成果物（音声合成済み映像）の生成、エラー処理（音源ファイル欠落・抽出失敗・ffmpeg 失敗時の挙動）。
 - **Out of scope**: Scene 内に直接置かれた AudioSource（Timeline 外の音）、Timeline の AudioTrack 以外の発音（スクリプト再生・イベント駆動の SE 等）、サラウンド／空間音響（AudioSource の 3D 設定）の再現。
 - **Adjacent expectations**: unity-render-core（Spec 1）から「書き出し完了後・Editor 終了前の eval フック（`RenderHooks.afterRecording` / `HookContext`）」「書き出した映像ファイルの絶対パス（主出力 + 追加出力）」「実効フレームレート」「イン点／アウト点」（`RenderHandoff`）を受け取る。unity-render-core の初期出力フォーマットは MP4 + MOV(ProRes) の 2 形式（per core D-2）であり、本 Spec の mux 対象は 2 コンテナとなる。音声メタデータ JSON スキーマの定義とフックで実行する抽出用 C# は本 Spec が unity-render-core に提供する。
 
@@ -46,10 +46,11 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 #### Acceptance Criteria
 
 1. When AudioTrack 上のオーディオクリップを検出した, the timeline-audio-remux モジュール shall 各クリップについて「音源アセットの元ファイルのパス（Assets 内の .wav/.mp3 等）」「ルート Timeline 基準の絶対開始時刻」「clipIn（頭出しオフセット）」「クリップ音量」（per plan S2-4）に加え、「クリップ長（ループ判定・打ち切りに使用）」「クリップ再生速度」「所属 AudioTrack のボリュームとミュート状態」を抽出する（see D-1 / D-2）
-2. The timeline-audio-remux モジュール shall 音源として Unity のインポート加工後データではなく、アセットの元ファイル（.wav/.mp3 等）を直接参照する（per plan S2-2）
+2. The timeline-audio-remux モジュール shall 音源として Unity のインポート加工後データではなく、アセットの元ファイル（.wav/.mp3 等）を直接参照する。元ファイルパスはプロジェクト相対のアセットパスを絶対ファイルシステムパスへ解決したものとし、サブアセット等ファイル実体を持たない参照は抽出対象外としてエラー記録する（per plan S2-2）
 3. When ネストされた Timeline 上のクリップの開始時刻を算出する, the timeline-audio-remux モジュール shall 祖先の ControlClip の配置時刻および timeScale（多段ネスト時は累積）を反映して、ルート Timeline 基準の絶対開始時刻・実効再生速度へ換算する（see D-5）
 4. When 走査と抽出が完了した, the timeline-audio-remux モジュール shall 抽出結果を音声メタデータ JSON としてファイルに出力し、CLI 側（TypeScript）が読み取れる形で受け渡す
 5. If 抽出処理の実行中にエラーが発生し抽出結果 JSON を出力できない, then the timeline-audio-remux モジュール shall 失敗理由を含むエラーを CLI 側へ返す
+6. The timeline-audio-remux モジュール shall 各クリップの時間変換を単一の正規化手順 —「祖先 timeScale の累積によるルート時刻への換算 → クリップ再生速度の適用 → clipIn の適用 → ループ折り返し → イン点による頭出し → アウト点による打ち切り」の順 — で行う（正確な数式と、timeScale が 0・負・非有限の場合の境界挙動は design で確定する。see D-1 / D-2 / D-5）
 
 ### Requirement 3: 音声メタデータ JSON スキーマの定義
 
@@ -83,9 +84,10 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 1. When ツール管理ディレクトリに ffmpeg が未取得の状態で音声合成が必要になった, the timeline-audio-remux モジュール shall ツールが保持するバージョン固定の公式配布 URL から ffmpeg を自動ダウンロードし、保持する SHA-256 ハッシュで検証したうえでツール管理ディレクトリに配置する（配布物には同梱しない。plan S2-3 を上書き。see D-3 / D-4）
 2. When 音声合成を実行する, the timeline-audio-remux モジュール shall ツール管理ディレクトリに配置した ffmpeg のみを使用する（ユーザーの PATH 上の ffmpeg を参照・実行しない）
 3. When ffmpeg を取得済みである, the timeline-audio-remux モジュール shall 以降の実行でダウンロードを行わず、オフラインでも音声合成を実行できる
-4. The timeline-audio-remux モジュール shall ffmpeg を再配布しない取得方式により、ツール本体の配布物にバイナリ同梱由来のライセンス義務（GPL/LGPL のソース提供等）を発生させない。取得した ffmpeg のライセンス情報・取得元はユーザーが確認できる形で記録する
+4. The timeline-audio-remux モジュール shall 採用した ffmpeg ビルド・取得元 URL・ライセンス文書（または参照先）・チェックサムをユーザーが確認できる形で記録する（バイナリを再配布しない取得方式によりツール本体配布物への同梱由来の義務は避ける方針だが、選定ビルドに応じたライセンス上の義務の最終確認は design フェーズで行う）
 5. If 取得済みの ffmpeg バイナリが見つからない・実行できない, then the timeline-audio-remux モジュール shall 再ダウンロードを試み、それも失敗した場合は当該 Scene の音声合成を失敗として扱う
-6. If ダウンロードまたはハッシュ検証が失敗した（オフライン環境を含む）, then the timeline-audio-remux モジュール shall 手動配置手順（取得元 URL と配置先ディレクトリ）を含むエラーを表示し、当該 Scene の音声合成を失敗として扱う（see D-4）
+6. If ダウンロードまたはハッシュ検証が失敗した（オフライン・プロキシ・ウイルス対策ソフトによるブロック・権限不足を含む）, then the timeline-audio-remux モジュール shall 失敗原因の切り分けに役立つ情報と手動配置手順（取得元 URL と配置先ディレクトリ）を含むエラーを表示し、当該 Scene の音声合成を失敗として扱う（see D-4）
+7. The timeline-audio-remux モジュール shall ffmpeg をプロジェクト外のバージョン・アーキテクチャ別ツール管理ディレクトリで管理し、ダウンロードは一時ファイルへ書き込んでハッシュ検証・展開・実行確認の完了後に atomic に有効化する。同時に複数の初回実行が起きた場合は取得処理を直列化する（管理ディレクトリの具体パス・Windows プロキシ設定への追従・破損バイナリの再検証は design で確定する）
 
 ### Requirement 6: ffmpeg による音声合成と映像への mux
 
@@ -93,7 +95,7 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 
 #### Acceptance Criteria
 
-1. When 音声メタデータ JSON と書き出し済み映像ファイルが揃った, the timeline-audio-remux モジュール shall 同梱 ffmpeg により各音源を絶対開始時刻・clipIn に従って時間軸上に配置し、ミックスした音声を映像ファイルへ mux して音声付き映像を生成する
+1. When 音声メタデータ JSON と書き出し済み映像ファイルが揃った, the timeline-audio-remux モジュール shall Requirement 5 によりツール管理ディレクトリへ取得・検証済みの ffmpeg を用いて、各音源を絶対開始時刻・clipIn に従って時間軸上に配置し、ミックスした音声を映像ファイルへ mux して音声付き映像を生成する
 2. The timeline-audio-remux モジュール shall unity-render-core の初期出力フォーマットである MP4 と MOV(ProRes) の両コンテナへの mux をサポートする（per core D-2）
 3. When mux を実行する, the timeline-audio-remux モジュール shall 映像ストリームを再エンコードせずに合成し、書き出し済み映像の画質を劣化させない
 4. The timeline-audio-remux モジュール shall 音声コーデック・サンプルレートを出力コンテナに応じて自動選択する（例: MP4 → AAC、MOV(ProRes) → PCM。具体的なコーデック設定値・サンプルレートの定矩は design フェーズで確定する。設定項目にはしない。see D-6）
@@ -117,10 +119,11 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 #### Acceptance Criteria
 
 1. The timeline-audio-remux モジュール shall unity-render-core のフック拡張点（`RenderHooks.afterRecording`: 書き出し完了後・Editor 終了前）に登録され、Scene の書き出し成功ごとに呼び出される
-2. When `afterRecording` フックが呼び出された, the timeline-audio-remux モジュール shall `HookContext` の eval 実行機能（`evalCSharp`）で音声情報抽出 C# を実行し、抽出結果 JSON を受け渡し用一時ディレクトリ（`sessionDir`）経由で受け取る
+2. When `afterRecording` フックが呼び出された, the timeline-audio-remux モジュール shall `HookContext` の eval 実行機能（`evalCSharp`）で音声情報抽出 C# を実行し、抽出結果 JSON を受け渡し用一時ディレクトリ（`sessionDir`）配下の固定ファイル名で受け取る。抽出 C# は JSON を atomic write（一時ファイル書き込み後リネーム）で出力し、モジュールは JSON のスキーマ検証成功を確認してから ffmpeg 処理へ進む（固定ファイル名・書き込み完了判定・`sessionDir` の保持期間と cleanup 時期の詳細契約は design で unity-render-core 側と合わせて確定する）
 3. When 音声合成を実行する, the timeline-audio-remux モジュール shall `RenderHandoff` から映像ファイルの絶対パス（主出力および追加出力）・実効フレームレート・イン点／アウト点を受け取って使用する
 4. The timeline-audio-remux モジュール shall Editor 内で実行する処理を音声情報の読み取り・抽出に限定し、シーン・アセット・プロジェクト設定への変更や保存を行わない（プロジェクト非介入原則。per plan G-8 の趣旨に準拠）
 5. If フック実行（抽出）が失敗した, then the timeline-audio-remux モジュール shall 失敗を unity-render-core へフック失敗として返し、unity-render-core による Editor の未保存終了と原状復帰を妨げない
+6. When 音声処理（抽出・ffmpeg 取得・合成のいずれか）が失敗した, the timeline-audio-remux モジュール shall 失敗区分（抽出失敗 / ffmpeg 取得失敗 / 合成失敗）と保全した映像ファイルパスを含む構造化された失敗情報を unity-render-core へ返し、unity-render-core が当該 Scene を「映像成功・音声失敗」として成否一覧・終了コードに反映できるようにする（Requirement 10 AC 4/5 と整合）
 
 ### Requirement 9: 最終成果物の生成
 
@@ -129,7 +132,7 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 #### Acceptance Criteria
 
 1. When 音声合成が成功した, the timeline-audio-remux モジュール shall 音声合成済みの映像ファイルを最終成果物として生成する
-2. When 書き出しが複数フォーマット（MP4 + MOV(ProRes)）で行われた, the timeline-audio-remux モジュール shall 主出力および追加出力のすべての映像ファイルに対して音声合成を行う
+2. When 書き出しが複数フォーマット（MP4 + MOV(ProRes)）で行われた, the timeline-audio-remux モジュール shall 主出力および追加出力の各映像ファイルに対して独立に音声合成（mux）を行い、出力ごとの成否を報告する。一方の出力の mux が失敗しても、成功した他方の成果物は保全する
 3. The timeline-audio-remux モジュール shall 最終成果物の配置方式（合成前の無音映像を置き換えるか、別名で保存するか）を design フェーズで決定し、いずれの方式でもユーザーが最終成果物を一意に識別できるようにする（per plan「他 Spec とのインターフェース」）
 4. When Timeline から抽出されたオーディオクリップが 0 件である（AudioTrack が存在しない・全クリップが対象外）, the timeline-audio-remux モジュール shall これをエラーとせず、音声合成をスキップして無音の映像を最終成果物とし、音声なしであった旨を報告する
 
@@ -155,6 +158,16 @@ timeline-audio-remux は、Unity Timeline（ControlTrack による入れ子構�
 1. Where デバッグモードが有効である, the timeline-audio-remux モジュール shall ffmpeg の実行コマンドラインと実行ログ（標準エラー出力を含む）を出力に含める（per plan G-11）
 2. While デバッグモードが無効である, the timeline-audio-remux モジュール shall ffmpeg の詳細ログを通常の進捗表示に混在させない
 3. Where デバッグモードが有効である, the timeline-audio-remux モジュール shall 抽出した音声メタデータ JSON を調査用に保持する
+
+### Requirement 12: Timeline 固有の検証スパイク
+
+**Objective:** 開発者として、本 Spec 固有の Unity Timeline API 依存の成立性を実装前に確認したい。unity-render-core の検証スパイク（P-1〜P-13）は eval 通信・Recorder・完了検知が中心で、Timeline の走査・抽出は検証対象に含まれないためである。
+
+#### Acceptance Criteria
+
+1. The timeline-audio-remux モジュール shall 実装着手前に、以下を対象とする Timeline 固有の検証スパイクを実施する: eval 実行 C# からの全階層 AudioTrack 列挙、AudioPlayableAsset/TimelineClip の属性抽出（clipIn・音量・再生速度・ループ設定）、AudioTrack の mute/track volume の取得、ControlTrack のネスト Timeline 解決と timeScale・配置時刻の取得、音源アセットの元ファイルパス解決、抽出結果 JSON の sessionDir への atomic write
+2. When 検証スパイクを実施する, the 検証スパイク shall 実測結果を記録し、design の確定（API マッピング・JSON スキーマ・時間変換式）の必須ゲートとする
+3. If 検証スパイクで抽出が成立しないことが判明した, then the timeline-audio-remux モジュール shall 後続タスクの実装に進まず、代替方針の再検討をユーザーに提示する
 
 ## Dig Summary
 
