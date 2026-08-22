@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
 	access,
 	copyFile,
 	mkdir,
+	readdir,
 	readFile,
 	rename,
 	rm,
@@ -181,6 +183,18 @@ export async function beginProjectSession(
 	projectPath: string,
 	options: BackupOptions = {},
 ): Promise<Result<BackupSession, GuardError>> {
+	const activeSessions = await findActiveSessions(
+		projectPath,
+		options.sessionRoot,
+	);
+	if (activeSessions.length > 0)
+		return failure(
+			"io-error",
+			"An active backup session already exists for this project; refuse concurrent execution.",
+			new Error(
+				activeSessions.map((session) => session.sessionDirectory).join(", "),
+			),
+		);
 	const backup = await beginBackupSession(projectPath, options);
 	if (!backup.ok) return backup;
 	const patched = await patchManifest(projectPath);
@@ -201,3 +215,37 @@ export async function beginProjectSession(
 	}
 }
 export const beginSession = beginProjectSession;
+
+/** Find active sessions for a project without modifying either the project or session state. */
+export async function findActiveSessions(
+	projectPath: string,
+	sessionRoot?: string,
+): Promise<readonly BackupSession[]> {
+	const rootResult =
+		sessionRoot === undefined ? resolveSessionDirectory() : ok(sessionRoot);
+	if (!rootResult.ok) return [];
+	let entries: Dirent<string>[];
+	try {
+		entries = await readdir(rootResult.value, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const resolvedProject = path.resolve(projectPath);
+	const sessions: BackupSession[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		try {
+			const session = await readBackupSession(
+				path.join(rootResult.value, entry.name),
+			);
+			if (
+				session.status === "active" &&
+				path.resolve(session.projectPath) === resolvedProject
+			)
+				sessions.push(session);
+		} catch {
+			// Ignore incomplete or unrelated session directories.
+		}
+	}
+	return sessions;
+}
