@@ -12,6 +12,17 @@ Rules for opening `spike/unity-project` (or any Unity project in this repo). The
   ```
 
 - NEVER run `unity open` without `--editor-version`. An unpinned open selects the newest installed Editor (e.g. 6000.3.x), which triggers the "project was saved with a different version / upgrade?" dialog and, after switching back, the "rebuild Library?" dialog.
+
+## Pass `-automated` to the Editor
+
+- Always launch the Editor with the `-automated` Editor argument in addition to the version pin. It puts the Editor in automation mode and suppresses most interactive dialogs while staying in GUI mode (do NOT combine with `-batchmode` / `-nographics`).
+- If `unity open` can forward Editor arguments, append `-automated` through that mechanism. If it cannot, launch the Editor executable directly instead:
+
+  ```powershell
+  & "<editor install path>\6000.0.36f1\Editor\Unity.exe" -projectPath "<absolute path>\spike\unity-project" -automated
+  ```
+
+- Record in `spike/README.md` which launch form actually worked, so later tasks reuse it.
 - NEVER upgrade the project to a newer Unity version, and never open it with any version other than the one in `ProjectVersion.txt`. If a version change is genuinely required, update `ProjectVersion.txt` deliberately in its own commit and note it in `spike/README.md`.
 
 ## Other dialog-avoidance rules
