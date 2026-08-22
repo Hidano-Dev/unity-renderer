@@ -37,7 +37,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 #### Acceptance Criteria
 
 1. The unity-render-core プロジェクト shall 最初の実装タスクとして「`unity command eval` 経由で RecorderTrack/RecorderClip をメモリ上に構築し映像書き出しが完了するか」を確認する検証スパイクを実施する
-2. When 検証スパイクを実施する, the 検証スパイク shall 「eval に渡せる C# のサイズ・複雑さの制約（長い処理の分割・送信方法）」および「書き出し完了の検知方式」の実測結果を記録する
+2. When 検証スパイクを実施する, the 検証スパイク shall 「eval に渡せる C# のサイズ・複雑さの制約（長い処理の分割・送信方法）」「書き出し完了の検知方式（Play Mode 突入・ドメインリロードを跨ぐ場合の挙動を含む）」「`AsyncGPUReadback.WaitAllRequests()` 同期化の外部からの設定可否」「Windows での MOV(ProRes) 出力可否」「localhost:7800 ポートの構成可否・衝突時挙動」の実測結果を記録する
 3. If 検証スパイクで書き出しが成立しないことが判明した, then the unity-render-core プロジェクト shall 後続タスクの実装に進まず、代替方針の再検討をユーザーに提示する
 4. The unity-render-core のドキュメント shall Unity CLI（`com.unity.pipeline`）が experimental であり破壊的変更のリスクがあることを明記する（per plan G-14）
 
@@ -47,7 +47,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 
 #### Acceptance Criteria
 
-1. The unity-render-core CLI shall 設定を JSON ファイルから読み込み、以下の項目をサポートする: 対象 Unity プロジェクトの指定、対象 Scene 名一覧、書き出し範囲（イン点／アウト点）、解像度、フレームレート、出力フォーマット（初期リリースは MP4 / MOV(ProRes) の 2 形式。see D-2）、出力先パスと出力ファイル名、デバッグモードフラグ
+1. The unity-render-core CLI shall 設定を JSON ファイルから読み込み、以下の項目をサポートする: 対象 Unity プロジェクトの指定、対象 Scene 名一覧、書き出し範囲（イン点／アウト点）、解像度、フレームレート、出力フォーマット（初期リリースは MP4 / MOV(ProRes) の 2 形式。see D-2）、出力先パスと出力ファイル名、デバッグモードフラグ、タイムアウト設定（書き出し・Editor 起動/接続の上書き値。いずれも任意。see D-5）
 2. Where 設定に書き出し範囲（イン点／アウト点）が指定されていない, the unity-render-core CLI shall Timeline 全長を書き出し範囲とする
 3. The unity-render-core CLI shall 解像度・フレームレートを設定ファイル側で指定させ、Timeline 側の設定に依存しない出力を行う（per plan S1-2）
 4. When 設定ファイルに必須項目の欠落・型不正・不正値がある, the unity-render-core CLI shall Unity Editor を起動する前に、該当項目を特定できるエラーメッセージを表示して失敗終了する
@@ -74,6 +74,9 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 4. When ユーザーがインストール実行を選択し `unity install` が成功した, the unity-render-core CLI shall インストールされた Editor を用いてバッチ実行を継続する
 5. If ユーザーが中断を選択した、または `unity install` が失敗した, then the unity-render-core CLI shall プロジェクトへ変更を加えることなく失敗終了する
 6. If 対象プロジェクトの Unity バージョンが 6.0 未満である, then the unity-render-core CLI shall 非対応バージョンである旨を表示して失敗終了する（per plan G-2）
+7. When バッチ実行または `check` を開始する, the unity-render-core CLI shall 公式 Unity CLI（`unity` コマンド）の存在と実行可否を確認する
+8. If 公式 Unity CLI が検出できない, then the unity-render-core CLI shall インストール手順（初回セットアップドキュメント参照）を含むエラーメッセージを表示して失敗終了する
+9. If 標準入力が対話端末に接続されていない（CI 等の非対話環境）状態でバージョン不一致の確認（AC 3）に到達した, then the unity-render-core CLI shall 自動的に「中断」を選択して失敗終了する
 
 ### Requirement 5: バッチ実行前の Scene 存在チェック
 
@@ -84,6 +87,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 1. The unity-render-core CLI shall Scene をファイルパスではなく Scene 名のみで受け取り、対象プロジェクト内を検索して Scene ファイルへ解決する（per plan S1-1）
 2. When バッチ実行を開始する, the unity-render-core CLI shall Unity Editor を起動する前に、設定された全 Scene 名の存在チェックを一括で実行する
 3. If 解決できない Scene 名が 1 つでも存在する, then the unity-render-core CLI shall 不足している Scene 名の一覧を提示して即エラー停止し、ユーザーに設定の修正を求める
+4. If 同名の Scene がプロジェクト内で複数解決された, then the unity-render-core CLI shall 該当する Scene 名と候補パスの一覧を提示して即エラー停止し、ユーザーに設定の修正を求める
 
 ### Requirement 6: パッケージ一時追加・バックアップ・原状復帰・クラッシュ復旧
 
@@ -144,8 +148,8 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 2. While 書き出しが進行中である, the unity-render-core CLI shall 書き出しの完了・失敗を検知する仕組みを持つ（検知方式は検証スパイクの結果に基づき design で決定する）
 3. When 書き出しが完了した, the unity-render-core CLI shall 出力ファイルが実際に生成されていることを確認したうえで当該 Scene を成功として記録する
 4. If 書き出しが失敗した、または完了検知後に出力ファイルが存在しない, then the unity-render-core CLI shall 当該 Scene を失敗として記録し、バッチキューの次の Scene へ進む
-5. If 書き出し処理が設定されたタイムアウト時間を超過した, then the unity-render-core CLI shall ハングした Unity Editor プロセスを強制終了し、当該 Scene を失敗として記録したうえで原状復帰処理（Requirement 6）を実行する
-6. The unity-render-core CLI shall 書き出しタイムアウトの既定値を Timeline 実長に基づき動的に算出し（算出式は design で確定）、Editor 起動・接続タイムアウトは固定既定値とする。いずれも設定ファイルで上書きできる（see D-5）
+5. If 書き出し処理が設定されたタイムアウト時間を超過した, then the unity-render-core CLI shall ハングした Unity Editor プロセスを強制終了して当該 Scene を失敗として記録し、後続 Scene が残る場合はパッケージ一時追加状態を維持したまま次の Scene へ進む。原状復帰（Requirement 6 の復元）はバッチ終了時の後処理として必ず実行されることを保証する
+6. The unity-render-core CLI shall 書き出しタイムアウトの既定値を書き出し区間の実長に基づき動的に算出し（算出式は design で確定）、Editor 起動・接続タイムアウトは固定既定値とする。いずれも設定ファイルで上書きできる（see D-5）
 7. If 書き出しが失敗またはタイムアウトした, then the unity-render-core CLI shall 不完全な出力ファイルを自動削除する。Where デバッグモードが有効である, the unity-render-core CLI shall 不完全な出力ファイルを調査用に保持する（see D-6）
 
 ### Requirement 11: Editor の未保存終了
@@ -155,7 +159,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 #### Acceptance Criteria
 
 1. When 書き出しと Editor 終了前フック（Requirement 14）の実行が完了した, the unity-render-core CLI shall シーン・アセットを一切保存せずに Unity Editor を自動終了させる
-2. If Editor が保存確認ダイアログ等で終了をブロックした、または規定時間内に終了しない, then the unity-render-core CLI shall Editor プロセスを強制終了し、原状復帰処理（Requirement 6）を継続する
+2. If Editor が保存確認ダイアログ等で終了をブロックした、または規定時間内に終了しない, then the unity-render-core CLI shall Editor プロセスを強制終了してジョブフローを継続する（後続 Scene が残る場合はパッケージ一時追加状態を維持し、原状復帰（Requirement 6 の復元）はバッチ終了時の後処理として必ず実行されることを保証する）
 
 ### Requirement 12: 複数 Scene の直列バッチ実行
 
@@ -189,7 +193,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 1. The unity-render-core CLI shall ジョブフロー上に「書き出し完了後・Editor 終了前」のフック地点を提供し、その地点で追加の eval（C# コード）を実行できる拡張点を持つ
 2. When Scene の書き出しが成功した, the unity-render-core CLI shall 後続処理（timeline-audio-remux）へ「書き出した映像ファイルの絶対パス」「書き出しに使った実効フレームレート」「イン点／アウト点」を受け渡す
 3. Where フックに追加の eval 処理が登録されていない, the unity-render-core CLI shall フック地点をスキップして通常のジョブフローを継続する
-4. If フックで実行された追加処理が失敗した, then the unity-render-core CLI shall 失敗を記録し、Editor の未保存終了と原状復帰（Requirement 6 / 11）を必ず実行する
+4. If フックで実行された追加処理が失敗した, then the unity-render-core CLI shall 失敗を記録し、Editor の未保存終了（Requirement 11）を必ず実行する。原状復帰（Requirement 6 の復元）はバッチ終了時の後処理として保証する
 
 ### Requirement 15: CLI コマンド体系と配布形態
 
@@ -198,7 +202,7 @@ unity-render-core は、Unity プロジェクトの外部から Scene 名を指�
 #### Acceptance Criteria
 
 1. The unity-render-core CLI shall `render <config.json>`（書き出し実行）、`check <config.json>`（事前検証のみ）、`init`（設定ファイル雛形の生成）のサブコマンドを提供する（see D-4）
-2. When `check` サブコマンドが実行された, the unity-render-core CLI shall Unity Editor を起動せずに、設定ファイルの検証（Requirement 2）、Scene 存在チェック（Requirement 5）、Unity Hub/Editor の検出とバージョン一致確認（Requirement 4）のみを実行し、結果を表示して終了する
+2. When `check` サブコマンドが実行された, the unity-render-core CLI shall Unity Editor を起動せずに、設定ファイルの検証（Requirement 2）、Scene 存在チェック（Requirement 5）、公式 Unity CLI の検出（Requirement 4 AC 7）と Unity Hub/Editor の検出・バージョン一致確認（Requirement 4）のみを実行し、結果を表示して終了する
 3. When `init` サブコマンドが実行された, the unity-render-core CLI shall 設定項目一式を含む設定ファイルの雛形（JSON）を生成する
 4. The unity-render-core CLI shall `bun build --compile` により Windows 向け単一実行ファイル（.exe）としてビルド・配布できる（see D-3）
 
