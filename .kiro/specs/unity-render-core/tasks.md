@@ -204,7 +204,7 @@
   - _Boundary: batch/output_
   - Files: src/batch/output.ts, tests/batch/output.test.ts
 
-- [ ] 8.2 (P) フック登録と Handoff 契約を実装する
+- [x] 8.2 (P) フック登録と Handoff 契約を実装する
   - 「書き出し完了後・Editor 終了前」のフック地点の in-process 登録 API と登録順の直列実行を実装する
   - 後続処理へ受け渡す情報（映像絶対パス・実効フレームレート・イン/アウト点）の契約型と、フック用コンテクスト（追加 eval 実行・受け渡し用ディレクトリ）を実装する
   - フック未登録時のスキップと、フック失敗の記録（後続フックのスキップを含む）を実装する
