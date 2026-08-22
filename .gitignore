@@ -1,0 +1,18 @@
+# Claude Code local (per-user) settings
+.claude/settings.local.json
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs / temp
+*.log
+*.tmp
