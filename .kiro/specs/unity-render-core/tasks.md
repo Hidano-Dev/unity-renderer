@@ -13,7 +13,7 @@
   - Files: package.json, tsconfig.json, biome.json, vitest.config.ts, .gitignore
 
 - [ ] 2. 検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
-- [ ] 2.1 スパイク計画文書と検証環境を準備する
+- [x] 2.1 スパイク計画文書と検証環境を準備する
   - `spike/README.md` に検証項目 P-1〜P-13 の全一覧・各項目の確認内容・成功基準・失敗基準を design から転記・具体化して記録する
   - 実測に使う Unity 6 のテスト用プロジェクト（Timeline + PlayableDirector を含む最小 Scene 構成）を準備し、その所在と前提条件（`unity auth login` 済み等）を文書に記録する
   - 完了条件: `spike/README.md` に P-1〜P-13 の全項目が成功/失敗基準付きで列挙され、実測手順が第三者が再現できる粒度で書かれている
