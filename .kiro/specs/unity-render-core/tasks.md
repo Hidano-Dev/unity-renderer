@@ -93,7 +93,7 @@
   - Files: src/unity-env/install.ts, tests/unity-env/install.test.ts
 
 - [ ] 5. プロジェクト非介入ガード（バックアップ・復元・復旧・ロック・Scene 解決）を実装する
-- [ ] 5.1 (P) manifest バックアップとパッケージ一時追加を実装する
+- [x] 5.1 (P) manifest バックアップとパッケージ一時追加を実装する
   - `manifest.json` / `packages-lock.json` をツール専有ディレクトリへバックアップし、コピーのバイト一致検証後にのみ一時追加へ進む。バックアップ失敗時は一時追加を行わず失敗終了する
   - セッションメタデータ（session.json）の atomic write（temp → rename）と、`packages-lock.json` 不在プロジェクトの「不在」記録を実装する
   - `com.unity.recorder`（未導入時のみ）と `com.unity.pipeline` の一時追加を、スパイクで確定したピン止めバージョンで実装する
