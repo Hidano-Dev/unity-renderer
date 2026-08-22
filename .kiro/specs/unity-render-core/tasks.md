@@ -4,7 +4,7 @@
 >
 > **トレース規約**: 本ファイルの `_Requirements:_` は requirements.md の数値 ID `N.M` を用いる。コード・テスト内の trace タグ（`@impl` / spec タグ）では接頭辞付きの `URC-N.M`（例: `URC-6.4`）を用いる（design M-2）。
 
-- [ ] 1. スパイク実施に必要な最小限の開発基盤を構築する
+- [x] 1. スパイク実施に必要な最小限の開発基盤を構築する
   - pnpm への依存追加（commander / zod / vitest / Biome ほか）と Bun ツールチェーンのセットアップを行い、pnpm と Bun の役割分担（依存解決は pnpm、ビルド・実行は Bun）を package.json の scripts に反映する
   - TypeScript strict 設定（`noUncheckedIndexedAccess` 含む）、Biome、vitest（`@hidano/artgraph/vitest` trace runner 組込み）の各設定を作成する
   - `.gitignore` に `dist/`・`*.exe`・vitest / artgraph trace の生成物を追加する

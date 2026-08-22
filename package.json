@@ -1,5 +1,22 @@
 {
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "bun build src/cli/index.ts --compile --target=bun-windows-x64 --outfile dist/unity-render.exe",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"format": "biome format --write .",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"artgraph:check": "artgraph check --diff"
+	},
 	"devDependencies": {
-		"@hidano/artgraph": "^0.3.0"
+		"@biomejs/biome": "^2.2.0",
+		"@hidano/artgraph": "^0.3.0",
+		"@types/node": "^22.15.0",
+		"commander": "^12.1.0",
+		"typescript": "^5.8.0",
+		"vitest": "^3.2.4",
+		"zod": "^4.0.0"
 	}
 }

@@ -17,3 +17,10 @@ Desktop.ini
 *.log
 *.tmp
 node_modules
+
+# Build and test artifacts
+dist/
+*.exe
+coverage/
+.artgraph/trace/
+*.jsonl
