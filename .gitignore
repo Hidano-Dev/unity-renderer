@@ -16,3 +16,4 @@ Desktop.ini
 # Logs / temp
 *.log
 *.tmp
+node_modules
