@@ -85,4 +85,40 @@ describe("EditorSession", () => {
 		expect(deps.killProcess).toHaveBeenCalledTimes(1);
 		expect(session.state).toBe("terminated");
 	});
+
+	it("sends the quit payload and waits for a graceful Editor exit", async () => {
+		const isProcessAlive = vi
+			.fn()
+			.mockResolvedValueOnce(true)
+			.mockResolvedValueOnce(false);
+		const deps = dependencies({
+			requestQuit: vi.fn(async () => undefined),
+			isProcessAlive,
+			pollIntervalMs: 1,
+		});
+		const session = createEditorSession(deps);
+		await session.start(editor, "C:\\projects\\demo", 2);
+
+		await session.quit(1);
+
+		expect(deps.requestQuit).toHaveBeenCalledOnce();
+		expect(deps.killProcess).not.toHaveBeenCalled();
+		expect(session.state).toBe("terminated");
+	});
+
+	it("force-kills the Editor when graceful quit is blocked", async () => {
+		const deps = dependencies({
+			requestQuit: vi.fn(async () => undefined),
+			isProcessAlive: vi.fn(async () => true),
+			pollIntervalMs: 1,
+		});
+		const session = createEditorSession(deps);
+		await session.start(editor, "C:\\projects\\demo", 2);
+
+		await session.quit(0.001);
+
+		expect(deps.requestQuit).toHaveBeenCalledOnce();
+		expect(deps.killProcess).toHaveBeenCalledWith(1234);
+		expect(session.state).toBe("terminated");
+	});
 });

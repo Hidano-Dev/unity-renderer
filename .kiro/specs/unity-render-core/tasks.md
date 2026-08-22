@@ -186,7 +186,7 @@
   - _Requirements: 10.2_
   - Files: src/editor-session/status-channel.ts, tests/editor-session/status-channel.test.ts
 
-- [ ] 7.4 Editor の未保存終了とタイムアウト時の強制終了を実装する
+- [x] 7.4 Editor の未保存終了とタイムアウト時の強制終了を実装する
   - 終了ペイロード送信による未保存終了要求と、規定時間内に終了しない場合の強制終了フォールバックを実装する
   - 終了完了後にプロセスが存在しないこと（terminated 状態）を保証する
   - 完了条件: 正常終了・終了ブロック→強制終了の両経路が単体テストで検証されている

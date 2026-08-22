@@ -22,6 +22,8 @@ export interface SessionDependencies {
 	readonly isPortInUse?: (port: number) => Promise<boolean>;
 	readonly isReachable?: (url: string) => Promise<boolean>;
 	readonly killProcess?: (pid: number) => Promise<void>;
+	readonly isProcessAlive?: (pid: number) => Promise<boolean>;
+	readonly requestQuit?: () => Promise<void>;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
 	readonly pollIntervalMs?: number;
 }
@@ -33,6 +35,7 @@ export interface EditorSession {
 		projectPath: string,
 		timeoutSec: number,
 	): Promise<Result<void, SessionError>>;
+	quit(timeoutSec: number): Promise<void>;
 	kill(): Promise<void>;
 }
 
@@ -72,6 +75,15 @@ async function defaultKillProcess(pid: number): Promise<void> {
 	process.kill(pid, "SIGKILL");
 }
 
+async function defaultIsProcessAlive(pid: number): Promise<boolean> {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function createEditorSession(
 	dependencies: SessionDependencies = {},
 ): EditorSession {
@@ -84,6 +96,8 @@ export function createEditorSession(
 	const isPortInUse = dependencies.isPortInUse ?? defaultIsPortInUse;
 	const isReachable = dependencies.isReachable ?? defaultIsReachable;
 	const killProcess = dependencies.killProcess ?? defaultKillProcess;
+	const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
+	const requestQuit = dependencies.requestQuit ?? (async () => undefined);
 	const sleep = dependencies.sleep ?? defaultSleep;
 	const pollIntervalMs = dependencies.pollIntervalMs ?? 2_000;
 
@@ -111,6 +125,7 @@ export function createEditorSession(
 			return currentState;
 		},
 		async start(editor, projectPath, timeoutSec) {
+			killPromise = undefined;
 			if (await isPortInUse(PIPELINE_PORT)) {
 				currentState = "terminated";
 				return err({
@@ -166,6 +181,33 @@ export function createEditorSession(
 				kind: "connect-timeout",
 				message: `Unity Editor への接続が ${timeoutSec} 秒以内に確立できませんでした。Editor.log を確認してください。`,
 			});
+		},
+		async quit(timeoutSec) {
+			if (currentState === "terminated" || pid === undefined) {
+				currentState = "terminated";
+				return;
+			}
+
+			try {
+				await requestQuit();
+			} catch {
+				// A blocked or failed quit request is handled by the forced fallback.
+			}
+
+			const processId = pid;
+			const deadline = Date.now() + timeoutSec * 1_000;
+			while (Date.now() < deadline) {
+				if (!(await isProcessAlive(processId))) {
+					pid = undefined;
+					currentState = "terminated";
+					return;
+				}
+				await sleep(
+					Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())),
+				);
+			}
+
+			await kill();
 		},
 		kill,
 	};
