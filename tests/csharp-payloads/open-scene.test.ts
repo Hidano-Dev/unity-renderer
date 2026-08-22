@@ -11,7 +11,7 @@ describe("open-scene payload", () => {
 
 		expect(result.source).toMatchInlineSnapshot(`
 			"// Unity eval payload: open a scene without prompting to save and inspect root directors.
-var parametersJson = \"{\\\"scenePath\\\":\\\"Assets/Scenes/Spike.unity\\\"}\";
+var parametersJson = "{\\\"scenePath\\\":\\\"Assets/Scenes/Spike.unity\\\"}";
 string ExtractJsonString(string json, string key)
 {
     var match = System.Text.RegularExpressions.Regex.Match(json, \"\\\\\\\"\" + key + \"\\\\\\\"\\\\s*:\\\\s*\\\\\\\"((?:\\\\\\\\.|[^\\\\\\\"\\\\\\\\])*)\\\\\\\"\");

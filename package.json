@@ -2,7 +2,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "bun build src/cli/index.ts --compile --target=bun-windows-x64 --outfile dist/unity-render.exe",
+		"build": "pnpm exec bun build src/cli/index.ts --compile --target=bun-windows-x64 --outfile dist/unity-render.exe",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"format": "biome format --write .",

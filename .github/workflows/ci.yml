@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Unit and integration tests
+        run: pnpm run test
+
+      - name: Artgraph gate
+        run: pnpm run artgraph:check
+
+      - name: Build single-file executable
+        run: pnpm run build
+
+      - name: Smoke test executable and embedded C# templates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $env:GITHUB_WORKSPACE "dist\unity-render.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Build did not produce dist/unity-render.exe"
+          }
+
+          $smoke = Join-Path $env:RUNNER_TEMP "unity-render-smoke"
+          New-Item -ItemType Directory -Force -Path $smoke | Out-Null
+          Push-Location $smoke
+          try {
+            & $exe init render-config.json
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "render-config.json")) {
+              throw "The compiled executable failed the init smoke test"
+            }
+
+            & $exe check render-config.json 2>&1 | Tee-Object -Variable checkOutput
+            if ($LASTEXITCODE -eq 0) {
+              throw "check unexpectedly succeeded without a Unity installation"
+            }
+            if (($checkOutput -join "`n") -notmatch "Unity CLI|unity") {
+              throw "The compiled executable did not reach the check command"
+            }
+          } finally {
+            Pop-Location
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+          if ($text -notlike "*EditorApplication.Exit(0)*") {
+            throw "The compiled executable does not contain the embedded C# templates"
+          }

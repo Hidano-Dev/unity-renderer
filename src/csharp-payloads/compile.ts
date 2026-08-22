@@ -1,8 +1,14 @@
 import type { JsonValue } from "../shared/types.js";
 import openSceneTemplate from "./templates/open-scene.cs" with { type: "text" };
-import quitEditorTemplate from "./templates/quit-editor.cs" with { type: "text" };
-import setupRecorderTemplate from "./templates/setup-recorder.cs" with { type: "text" };
-import startRecordingTemplate from "./templates/start-recording.cs" with { type: "text" };
+import quitEditorTemplate from "./templates/quit-editor.cs" with {
+	type: "text",
+};
+import setupRecorderTemplate from "./templates/setup-recorder.cs" with {
+	type: "text",
+};
+import startRecordingTemplate from "./templates/start-recording.cs" with {
+	type: "text",
+};
 
 /** @impl URC-8.1 @impl URC-9.1 @impl URC-10.1 @impl URC-11.1 */
 

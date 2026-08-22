@@ -283,7 +283,7 @@
   - _Boundary: docs_
   - Files: docs/setup.md
 
-- [ ] 11.2 (P) 単一実行ファイルの配布ビルドと CI を整備する
+- [x] 11.2 (P) 単一実行ファイルの配布ビルドと CI を整備する
   - `bun build --compile` による Windows 向け単一 .exe のビルドスクリプトを整備し、生成物のスモークテスト（`init` → `check` が exe 単体で動作）を行う
   - C# テンプレートが .exe に埋め込まれ、外部ファイルなしで動作することを確認する
   - GitHub Actions（windows-latest）で typecheck / lint / vitest / artgraph gate を実行する CI を整備する
