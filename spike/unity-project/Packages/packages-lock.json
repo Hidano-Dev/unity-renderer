@@ -2,7 +2,7 @@
   "dependencies": {
     "com.unity.timeline": { "version": "1.7.7", "depth": 0 },
     "com.unity.recorder": { "version": "5.1.0", "depth": 0 },
-    "com.unity.pipeline": { "version": "0.2.0", "depth": 0 },
+    "com.unity.pipeline": { "version": "0.5.0-exp.1", "depth": 0 },
     "com.unity.modules.audio": { "version": "1.0.0", "depth": 0 },
     "com.unity.modules.animation": { "version": "1.0.0", "depth": 0 },
     "com.unity.modules.director": { "version": "1.0.0", "depth": 0 },
