@@ -164,7 +164,7 @@
   - Files: src/csharp-payloads/templates/start-recording.cs, src/csharp-payloads/templates/quit-editor.cs, tests/csharp-payloads/start-recording.test.ts, tests/csharp-payloads/quit-editor.test.ts
 
 - [ ] 7. Editor セッション管理を実装する
-- [ ] 7.1 Editor の GUI 起動・接続確立・強制終了を実装する
+- [x] 7.1 Editor の GUI 起動・接続確立・強制終了を実装する
   - `unity open` による GUI モード起動（batchmode / nographics 不使用）と PID 追跡・冪等な強制終了を実装する
   - 起動前のポート 7800 使用チェック（使用中は Editor を起動せず即失敗）と、起動後の接続待ちポーリング・接続タイムアウト時のプロセス終了 + 手掛かり付きエラーを実装する
   - 完了条件: 接続成功・接続タイムアウト→強制終了・ポート競合の各経路が単体テストで検証されている
