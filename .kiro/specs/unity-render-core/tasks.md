@@ -135,7 +135,7 @@
   - _Requirements: 8.1, 9.1, 10.1, 11.1_
   - Files: src/csharp-payloads/compile.ts, tests/csharp-payloads/compile.test.ts
 
-- [ ] 6.2 (P) Scene オープンと PlayableDirector 検出ペイロードを実装する
+- [x] 6.2 (P) Scene オープンと PlayableDirector 検出ペイロードを実装する
   - 保存確認なしモードでの Scene オープンと、ルート階層からの PlayableDirector 検出（入れ子は対象外）を実装する
   - 複数検出時は警告情報付きで先頭を選択、0 件時はエラー応答を返す。Timeline 全長・実効フレームレートを応答に含める
   - 完了条件: パラメータ注入済み出力の固定スナップショットテストと必須 API 呼び出し列の検証が通る
