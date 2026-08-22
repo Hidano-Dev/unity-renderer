@@ -74,7 +74,7 @@
   - Files: src/config/load.ts, src/config/template.ts, tests/config/load.test.ts, tests/config/template.test.ts
 
 - [ ] 4. Unity 環境検出とバージョン一致確認を実装する
-- [ ] 4.1 (P) Unity CLI 検出・Editor 列挙・プロジェクトバージョン解析を実装する
+- [x] 4.1 (P) Unity CLI 検出・Editor 列挙・プロジェクトバージョン解析を実装する
   - `unity` コマンドの存在・実行可否確認と、不在時のセットアップ手順参照付きエラーを実装する
   - `unity editors -i` 出力の寛容な行パーサを実装し、スパイクで採取した実出力フィクスチャでテストを固定する
   - `ProjectSettings/ProjectVersion.txt` の解析と Unity 6.0 未満の非対応エラーを実装する
