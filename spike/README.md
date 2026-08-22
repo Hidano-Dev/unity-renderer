@@ -39,18 +39,56 @@
 | P-12 | manifest/packages-lock のバックアップ復元中に終了させ、部分書き込みと次回の `active` セッション復旧を確認する。 | バイト一致で復元でき、途中終了後も再実行で復旧できる。 | temp→rename の atomic 復元へ変更し、session.json を次回復旧対象にする。 |
 | P-13 | 出力検証成功後、Editor 終了前に HookPhase を発火し、`formats` 先頭を `videoPath`、残りを `additionalOutputs` として渡す。 | 出力ファイル確定と Editor 接続を両立し、RenderHandoff が一意に得られる。 | フック地点または `evalCSharp` 契約を Spec 2 と再協議する。 |
 
-## 実測記録（未実施）
+## 実測記録（2.2 実施結果）
 
 | 項目 | 内容 |
 |---|---|
-| 実施日時 / 実施者 | 未実施 |
-| Unity Editor / CLI | 未取得 |
-| パッケージバージョン | 未取得 |
-| P-1〜P-13 | すべて未実施 |
-| 判定 | 未判定（GO/NO-GO は実測後） |
+| 実施日時 / 実施者 | 2026-08-23 JST / Codex |
+| Unity Editor / CLI | Unity 6.0.36f1、Unity CLI の `unity editors -i` 実出力を取得 |
+| パッケージバージョン | `com.unity.pipeline` 0.5.0-exp.1、`com.unity.recorder` 5.1.0、`com.unity.timeline` 1.7.7 |
+| 対象プロジェクト | `spike/unity-project`。元の 0.2.0 は解決不能だったため、実測時のみ CLI で 0.5.0-exp.1 を適用 |
+| P-1 | 成功（下記詳細） |
+| P-2 | 部分成立（Play Mode 中の eval 応答は成功、status JSON の atomic write / 強制終了残留状態は未実装のため未確定） |
+| P-5 | 成功（7800 固定、既存 Editor の PID とポート占有を識別可能） |
+| P-8 | 成功（`unity editors -i` の表形式実出力を取得） |
+| 2.2 判定 | 条件付き成立。eval 経路は成立。P-2 の status チャネルは後続実装で別途確定する |
 | ユーザー承認 | 未承認 |
 
-実測後は各行に結果、測定値、ログファイルの相対パスを追記し、判定を GO または NO-GO に更新する。P-3 の書き出し不成立は NO-GO とし、後続の render 実装へ進まず代替方針を再要件化する。
+### 2.2 実測ログ
+
+以下は 2026-08-23 JST に PowerShell で実行した結果の要約である。Unity Editor は `unity open <path> --editor-version 6000.0.36f1` で GUI 起動した。`unity pipeline list --format json` は次を返した。
+
+```text
+projectName: unity-project
+pid: 63764
+hasPipelinePackage: true
+pipelineVersion: 0.5.0-exp.1
+pipelineServer.port: 7800
+pipelineServer.isReachable: true
+apiUrl: http://127.0.0.1:7800/api/editor_status
+```
+
+`unity list --project-path <path> --format json` で `eval` と `eval_file` の受付形態を確認した。`eval` は必須 `code`（任意 `timeout`、既定 5000 ms）、`eval_file` は必須 `file`（任意 `timeout`）を受け付ける。実行例と結果は次のとおり。
+
+```text
+unity command eval --project-path <path> "return 1+1;" --format json
+=> success=true, result=2, executionTimeMs=407
+
+unity command eval_file --project-path <path> <absolute-path> --format json
+=> success=true, result=42, executionTimeMs=340
+```
+
+コードなしの `eval` は HTTP 400 相当の `Required parameter 'code' is missing or empty` となり、C# コンパイルエラーは CLI 終了コード 6 と JSON の `COMMAND_FAILED` で返った。成功応答には `target.host=127.0.0.1`、`target.port=7800`、`result.success`、`result.result`、`executionTimeMs`、`executedAt` が含まれる。
+
+サイズ境界は、コメントで埋めた C# を用いて確認した。inline `eval` は 1,024 / 4,096 / 8,192 / 16,384 bytes が成功した。32,768 bytes 以上は Unity に到達する前に Windows の `The filename or extension is too long` となったため、inline の実用上限は CLI のプロセス引数上限に制約される。`eval_file` は 65,516 bytes の `.cs` ファイルで `result=42` を返した。長い処理は一時 `.cs` + `eval_file` を第一候補とする。
+
+P-2 は `eval` で `EditorApplication.isPlaying = true` を設定し、8 秒後も `unity pipeline list` の 7800 接続が reachable、別の `eval` で `isPlaying=true` を確認した。その後 `isPlaying=false` に戻した。一方、status JSON の atomic write、ドメインリロードを跨ぐ残留状態、強制終了後の復旧は、このスパイクには status writer が存在しないため実測対象を構成できず未確定とした。
+
+P-5 は `Get-NetTCPConnection -LocalPort 7800 -State Listen` で `0.0.0.0:7800` と Editor PID 63764 を確認し、`unity pipeline list` で同一 PID / プロジェクト / API URL を対応付けられた。Pipeline の API URL は `pipelineServer.apiUrl` として報告されるが、実測範囲では任意ポート設定の CLI オプションは確認できなかった。P-8 の `unity editors -i` は Unity 6.3.19f1 / 6.3.10f1 / 6.3.7f1 / 6.1.4f1 / 6.0.36f1 / 6.0.36f1 / 2022.3 系を表形式で出力した。
+
+なお、初期 manifest の `com.unity.pipeline@0.2.0` は Editor.log の `Package ... cannot be found` で解決不能だった。CLI の `unity pipeline list-versions` で確認した最新版 0.5.0-exp.1 を実測時のみ適用すると解決し、Editor 起動後に Pipeline server が 7800 で reachable になった。実測後は manifest、packages-lock、ProjectVersion、Unity 生成物を元に戻している。
+
+P-3、P-4、P-6、P-7、P-9〜P-13 は後続タスクで実測する。P-3 の書き出し不成立は全体の NO-GO とし、後続の render 実装へ進まず代替方針を再要件化する。
 
 ## 再現用コマンド例
 

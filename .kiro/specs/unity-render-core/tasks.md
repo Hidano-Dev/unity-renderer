@@ -20,7 +20,7 @@
   - _Requirements: 1.1, 1.2_
   - Files: spike/README.md
 
-- [ ] 2.2 Unity CLI eval 経路の成立性を実測する
+- [x] 2.2 Unity CLI eval 経路の成立性を実測する
   - `unity open` による GUI 起動と localhost:7800 への接続、`eval` / `eval_file` の実際の受け付け形態・HTTP リクエスト形式・エラー応答形式を実測する（P-1）
   - eval に渡せる C# のサイズ・複雑さの制約と、長い処理の分割・送信方法を確認する（P-1）
   - Play Mode 突入・ドメインリロード中の HTTP API の応答性と、ステータスファイル方式による完了検知の成立性（atomic write 可否・強制終了時の残留状態を含む）を確認する（P-2）
