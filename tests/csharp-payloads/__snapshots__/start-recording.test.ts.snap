@@ -1,10 +1,13 @@
-// Unity eval payload: enter Play Mode, start the in-memory Recorder, and publish
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`start-recording payload > starts Play Mode recording and reports progress through an atomic status file 1`] = `
+"// Unity eval payload: enter Play Mode, start the in-memory Recorder, and publish
 // status updates without ever writing a Scene or an Asset.
-var parametersJson = /*__PARAMS_JSON__*/;
+var parametersJson = "{\\"statusPath\\":\\"C:\\\\\\\\renders\\\\\\\\status.json\\",\\"operationId\\":\\"scene-01-run-1\\"}";
 
 string JsonString(string json, string key)
 {
-    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"");
+    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\\\\"" + key + "\\\\\\"\\\\s*:\\\\s*\\\\\\"((?:\\\\\\\\.|[^\\\\\\"\\\\\\\\])*)\\\\\\"");
     if (!match.Success)
         throw new System.ArgumentException("Missing required payload parameter: " + key);
     return System.Text.RegularExpressions.Regex.Unescape(match.Groups[1].Value);
@@ -21,8 +24,8 @@ void WriteStatus(string state, double progress, string error)
 {
     var tempPath = statusPath + ".tmp";
     var progressText = progress.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    var errorJson = error == null ? "null" : "\"" + error.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-    var json = "{\"operationId\":\"" + operationId + "\",\"state\":\"" + state + "\",\"progress\":" + progressText + ",\"error\":" + errorJson + "}";
+    var errorJson = error == null ? "null" : "\\"" + error.Replace("\\\\", "\\\\\\\\").Replace("\\"", "\\\\\\"") + "\\"";
+    var json = "{\\"operationId\\":\\"" + operationId + "\\",\\"state\\":\\"" + state + "\\",\\"progress\\":" + progressText + ",\\"error\\":" + errorJson + "}";
     System.IO.File.WriteAllText(tempPath, json, System.Text.Encoding.UTF8);
     System.IO.File.Move(tempPath, statusPath, true);
 }
@@ -69,3 +72,5 @@ void StartRecording()
 // A delay call lets the Editor finish the domain reload caused by entering Play Mode.
 UnityEditor.EditorApplication.delayCall += StartRecording;
 UnityEditor.EditorApplication.isPlaying = true;
+"
+`;

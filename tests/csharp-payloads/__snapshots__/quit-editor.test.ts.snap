@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`quit-editor payload > exits the GUI Editor without saving project or scene assets 1`] = `
+"// Unity eval payload: terminate the GUI Editor without a save prompt.
+var parametersJson = "{\\"reason\\":\\"recording-complete\\"}";
+
+// Deliberately do not call any AssetDatabase or Scene save API.
+// EditorApplication.Exit bypasses the save dialog and is the normal shutdown path.
+UnityEditor.EditorApplication.Exit(0);
+"
+`;
