@@ -249,7 +249,7 @@
   - _Requirements: 6.4, 13.4, 13.5, 15.1_
   - Files: src/cli/index.ts, src/cli/render.ts, tests/cli/render.test.ts
 
-- [ ] 9.2 check / init サブコマンドを実装する
+- [x] 9.2 check / init サブコマンドを実装する
   - `check`: Editor を起動せずに設定検証・Scene 存在チェック・Unity CLI 検出・Editor 検出/バージョン一致確認のみを実行し結果を表示する（クラッシュ復旧を除きプロジェクト無変更）
   - `init`: 設定項目一式を含む雛形 JSON をカレントディレクトリへ生成する（既存ファイルは上書きせずエラー）
   - 完了条件: `check` が Editor 非起動・プロジェクト無変更であること、`init` の生成物がスキーマ検証を通ることが結合テストで検証されている
