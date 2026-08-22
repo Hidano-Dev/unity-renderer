@@ -58,6 +58,23 @@ describe("PipelineClient", () => {
 		).toEqual([]);
 	});
 
+	it("accepts the Unity CLI JSON envelope", async () => {
+		sessionDir = await mkdtemp(join(tmpdir(), "pipeline-client-"));
+		const execute = vi.fn(async () => ({
+			stdout: JSON.stringify({
+				data: { result: { success: true, result: 42 } },
+			}),
+			stderr: "",
+			exitCode: 0,
+		}));
+		const result = await setup({ execute }).eval(payload, {
+			timeoutSec: 7,
+			transport: { kind: "inline" },
+		});
+
+		expect(result).toEqual({ ok: true, value: { returnValue: "42" } });
+	});
+
 	it("retries transport failures three times and classifies the exhausted error", async () => {
 		sessionDir = await mkdtemp(join(tmpdir(), "pipeline-client-"));
 		const execute = vi.fn().mockRejectedValue(new Error("ECONNRESET"));

@@ -34,12 +34,10 @@ describe("EditorSession", () => {
 			"unity",
 			[
 				"open",
-				"--path",
 				"C:\\projects\\demo",
 				"--editor-version",
 				"6000.0.36f1",
-				"--",
-				"-automated",
+				"--args=-automated",
 			],
 			{ windowsHide: true },
 		);

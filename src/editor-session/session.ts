@@ -141,12 +141,10 @@ export function createEditorSession(
 					"unity",
 					[
 						"open",
-						"--path",
 						projectPath,
 						"--editor-version",
 						editor.version.raw,
-						"--",
-						"-automated",
+						"--args=-automated",
 					],
 					{ windowsHide: true },
 				);

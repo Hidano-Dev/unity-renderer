@@ -89,7 +89,8 @@ function responseResult(stdout: string): {
 	const parsed: unknown = JSON.parse(stdout);
 	if (!parsed || typeof parsed !== "object")
 		throw new Error("Invalid pipeline response");
-	const result = (parsed as { result?: unknown }).result;
+	const root = parsed as { result?: unknown; data?: { result?: unknown } };
+	const result = root.result ?? root.data?.result;
 	if (!result || typeof result !== "object")
 		throw new Error("Invalid pipeline result");
 	const value = (result as { result?: unknown }).result;
