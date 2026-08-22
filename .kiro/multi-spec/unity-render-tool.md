@@ -64,7 +64,7 @@ Unity CLI の一次情報:
 | # | Spec | Status  | 依存 |
 |---|------|---------|------|
 | 1 | unity-render-core   | DONE | -    |
-| 2 | timeline-audio-remux | IN_PROGRESS | #1   |
+| 2 | timeline-audio-remux | DONE | #1   |
 
 ---
 
@@ -130,8 +130,8 @@ Unity プロジェクト外部から Scene 名を指定し、Unity CLI（`unity 
 
 ## Spec: timeline-audio-remux
 
-- Status: IN_PROGRESS
-- Feature dir: (spec-init-batch が記入)
+- Status: DONE
+- Feature dir: .kiro/specs/timeline-audio-remux/
 - 依存: unity-render-core
 
 ### 概要
