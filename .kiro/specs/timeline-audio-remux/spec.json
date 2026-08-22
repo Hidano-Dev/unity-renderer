@@ -1,0 +1,22 @@
+{
+  "feature_name": "timeline-audio-remux",
+  "created_at": "2026-08-22T14:00:29Z",
+  "updated_at": "2026-08-22T14:00:29Z",
+  "language": "ja",
+  "phase": "initialized",
+  "approvals": {
+    "requirements": {
+      "generated": false,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
