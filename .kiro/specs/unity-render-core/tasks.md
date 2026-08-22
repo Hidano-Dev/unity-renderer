@@ -111,7 +111,7 @@
   - _Requirements: 6.3, 6.4, 6.5_
   - Files: src/project-guard/recovery.ts, src/project-guard/backup.ts, tests/project-guard/recovery.test.ts
 
-- [ ] 5.3 (P) プロジェクトロック競合検出を実装する
+- [x] 5.3 (P) プロジェクトロック競合検出を実装する
   - `Temp/UnityLockfile` の排他モードオープン試行により、別 Editor による使用中とクラッシュ残骸（stale lockfile）を判別する
   - 競合時は対象プロジェクトを閉じるよう促すエラーメッセージで失敗終了する
   - 完了条件: 「使用中（共有違反）」「不在」「残骸（排他成功）」の 3 経路が単体テストで検証されている
