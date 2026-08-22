@@ -63,14 +63,14 @@ Unity CLI の一次情報:
 
 | # | Spec | Status  | 依存 |
 |---|------|---------|------|
-| 1 | unity-render-core   | PENDING | -    |
+| 1 | unity-render-core   | IN_PROGRESS | -    |
 | 2 | timeline-audio-remux | PENDING | #1   |
 
 ---
 
 ## Spec: unity-render-core
 
-- Status: PENDING
+- Status: IN_PROGRESS
 - Feature dir: (spec-init-batch が記入)
 - 依存: なし
 
