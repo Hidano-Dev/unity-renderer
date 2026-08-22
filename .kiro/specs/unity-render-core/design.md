@@ -14,7 +14,7 @@
 - プロジェクト非介入の原則を異常系（クラッシュ・タイムアウト・強制終了）まで含めて保証する
 - `bun build --compile` による単一 .exe 配布で、Node/Bun 未インストール環境でも動作する
 - timeline-audio-remux（Spec 2）が利用するフック地点と受け渡し型を安定した契約として提供する
-- 検証スパイク（Requirement 1）で experimental 基盤の成立性を最初に確認し、本設計の暫定決定を実測で確定する
+- 検証スパイク（Requirement 1）で experimental 基盤の成立性を最初に確認し、本設計の暫定決定を実測で確定する（スパイクは render 本体実装の必須ゲートであり、通過まで後続実装に着手しない。「Research Needed / スパイク依存の暫定決定」節参照）
 
 ### Non-Goals
 
@@ -192,7 +192,7 @@ tests/                        # vitest（src/ とミラー構成）
 docs/
 └── setup.md                  # 初回セットアップ（unity auth login、experimental リスク明記）
 spike/
-└── README.md                 # 検証スパイクの手順・記録（Requirement 1）
+└── README.md                 # 検証スパイクの実装ゲート文書（Requirement 1。1.2 の全検証項目・成功基準・失敗基準・実測ログ・ユーザー承認状態を記録）
 ```
 
 ### Modified Files
@@ -201,9 +201,11 @@ spike/
 - `.gitignore` — `dist/`、`*.exe`、vitest / artgraph trace の生成物を追加
 - 新規: `tsconfig.json`（strict, `noUncheckedIndexedAccess`）、`biome.json`、`vitest.config.ts`（artgraph trace runner 組込み）、`.github/workflows/ci.yml`
 
-> スキャフォールディング（tsconfig / lint / CI / .gitignore）は tasks フェーズで検証スパイクの直後の初期タスク群とする。
+> スキャフォールディング（tsconfig / lint / CI / .gitignore）は tasks フェーズで検証スパイクの直後の初期タスク群とする。ただし render 本体の実装タスクおよび P-1〜P-13 の暫定実装の採用は、検証スパイクの実装ゲート（「Research Needed / スパイク依存の暫定決定」節）を通過するまで開始しない。
 
 ## System Flows
+
+> **前提（実装ゲート）**: 本節のフローおよび暫定決定 P-1〜P-13 に依存する実装は、検証スパイク（Requirement 1）の実装ゲート（「Research Needed / スパイク依存の暫定決定」節）を通過するまで開始してはならない。`spike/README.md` に 1.2 の全検証項目・成功基準・失敗基準・実測ログ・ユーザー承認状態を記録し、1.3 の不成立に該当しないことを確認してから着手する。不成立時は NO-GO とし、代替方式の再要件化を行う。
 
 ### render コマンド全体シーケンス
 
@@ -246,7 +248,7 @@ sequenceDiagram
 
 - バックアップ・パッケージ一時追加はバッチ開始時に 1 回、復元はバッチ終了時に 1 回。Scene ごとの Editor 再起動（D-1 / 12.4）の間は一時追加状態を維持する（6.3）
 - Scene 処理中のあらゆる失敗（接続不能・Director 不在・書き出し失敗・タイムアウト・フック失敗）は「当該 Scene の失敗記録 + Editor プロセスの確実な終了 + 次 Scene へ継続」に収束させる（10.5 / 11.2 / 12.2 / 14.4）。バッチ終了時の復元は `finally` 相当で必ず実行する
-- 完了検知はステータスファイル方式を主経路とする（後述の暫定決定 P-2）
+- 完了検知はステータスファイル方式を**候補**とする（後述の暫定決定 P-2。スパイク成功まで採用未確定）
 
 ### 1 Scene ジョブの状態遷移
 
@@ -397,7 +399,7 @@ interface ConfigService {
 - `unity` コマンドの存在・実行可否を最初に確認し、不在時はセットアップドキュメント参照を含むエラーで失敗終了（4.7, 4.8）
 - `unity editors -i` の出力からインストール済み Editor を列挙する（Unity Hub のインストール情報は Unity CLI が集約するため、レジストリ/Hub 設定ファイルの直接読取は行わない）
 - `ProjectSettings/ProjectVersion.txt` の `m_EditorVersion` を解析し、`6000.` 未満（Unity 6.0 未満）は非対応エラー（4.6）
-- 不一致時は対話確認（`unity install <version>` 実行 or 中断）。stdin が TTY でなければ自動的に中断を選択（4.9）
+- 不一致時は対話確認（`unity install <version>` 実行 or 中断）。`ensureEditor` の `interactive` は **`stdin.isTTY === true` かつ CLI が明示的な対話モードで動作している場合のみ true** とする。`interactive === false` の場合、バージョン不一致時は `unity install` を実行せず即座に `install-declined` を返し、対象プロジェクトへ一切変更を加えない（4.5, 4.9）
 
 **Contracts**: Service [x]
 
@@ -417,7 +419,12 @@ interface UnityEnvService {
   detectUnityCli(): Promise<Result<{ readonly cliVersion: string }, EnvError>>;
   listEditors(): Promise<Result<readonly EditorInstall[], EnvError>>;
   readProjectVersion(projectPath: string): Promise<Result<UnityVersion, EnvError>>;
-  /** 一致 Editor を返す。不在時は install 確認フロー（非対話時は install-declined） */
+  /**
+   * 一致 Editor を返す。不一致時は install 確認フロー。
+   * interactive は stdin.isTTY === true かつ明示的な対話モードでのみ true。
+   * interactive === false のとき不一致なら install-declined を返し、
+   * unity install は実行しない（プロジェクト非変更）。
+   */
   ensureEditor(required: UnityVersion, interactive: boolean): Promise<Result<EditorInstall, EnvError>>;
 }
 ```
@@ -517,8 +524,12 @@ interface ProjectGuardService {
 
 - `unity open <projectPath>` で Editor を GUI モードで起動する（`-batchmode` / `-nographics` 不使用。7.1）。起動した Editor プロセスの PID を追跡し、強制終了（`taskkill /PID <pid> /T /F`）を常に可能にする
 - 起動後、`http://localhost:7800` へ 2 秒間隔でヘルスチェックを行い、`editorStartSec`（既定 600 秒。パッケージ import・コンパイルを含む）以内に応答がなければプロセスを強制終了して失敗扱い（7.3）
-- eval 送信はコマンドライン長・エスケープ制約を回避するため、ペイロードをセッション一時ファイルに書き出して `eval_file` 相当で送信する方式を第一候補とする（暫定決定 P-1）
-- 完了検知は `status-channel`: C# ペイロードが書き込むステータス JSON ファイルを CLI 側がポーリングする（暫定決定 P-2）。Play Mode 中・ドメインリロード中に HTTP API が応答しない場合でも検知が継続する
+- eval 送信はコマンドライン長・エスケープ制約を回避するため、ペイロードをセッション一時ファイルに書き出して `eval_file` 相当で送信する `file` トランスポートを第一**候補**とする（暫定決定 P-1。スパイク成功まで採用未確定）。送信方式は `EvalOptions.transport` の判別可能ユニオンで表現する（後述の Service Interface と pipeline-client 契約参照）
+- 完了検知は `status-channel`（C# ペイロードが書き込むステータス JSON ファイルを CLI 側がポーリング。Play Mode 中・ドメインリロード中に HTTP API が応答しない場合でも検知が継続する想定）を**候補**とする（暫定決定 P-2。スパイク成功まで「採用決定」ではなく候補として扱う）。スパイク成功後に以下の契約項目を確定し、`RecordingStatus` / `EditorSession` の契約へ反映する:
+  - ステータス JSON の atomic write 仕様（C# 側の temp file → rename 可否、部分書き込みの発生条件と CLI 側スキップ規則）
+  - 状態遷移（`preparing → recording → completed | failed` の許容遷移と、過去実行の古い status ファイルの識別方法）
+  - ステータスが更新不能になった場合のタイムアウト（`recording` のまま `elapsedSec` が進行しない場合の打ち切り条件）
+  - ドメインリロード後の監視コールバック・Recorder 構成の再適用条件。**P-7 が不成立（in-memory Recorder 構成がドメインリロードで失われる）と判明した場合は、Play Mode 突入後の `setup-recorder` 再適用（2 段ペイロード構成）を必須とする**
 - `requestQuit` は `quit-editor.cs`（`EditorApplication.Exit(0)`、保存ダイアログを経由しない）を送信し、`editorQuitSec`（既定 60 秒）以内にプロセス終了しなければ強制終了する（11.2）
 
 **Contracts**: Service [x]
@@ -527,17 +538,29 @@ interface ProjectGuardService {
 
 ```typescript
 interface SessionError {
-  readonly kind: "launch-failed" | "connect-timeout" | "eval-failed" | "eval-timeout" | "quit-timeout";
+  readonly kind: "launch-failed" | "connect-timeout" | "port-conflict"
+    | "eval-failed" | "eval-timeout" | "eval-transport-failed" | "quit-timeout";
   readonly message: string;
   readonly unityLogExcerpt?: string;        // デバッグモード時のみ収集
 }
 
 type EvalResult = Result<{ readonly returnValue: string }, SessionError>;
 
+/** eval 送信方式（判別可能ユニオン）。既定は file（P-1 第一候補） */
+type EvalTransport =
+  | { readonly kind: "file" }          // 一時ファイル + eval_file 送信（P-1 第一候補）
+  | { readonly kind: "inline" }        // 短小ペイロードの本文直接送信
+  | { readonly kind: "inline-split" }; // P-1 不成立時: クラス定義の事前送信 + 呼び出しの分割送信
+
+interface EvalOptions {
+  readonly timeoutSec: number;
+  readonly transport: EvalTransport;
+}
+
 interface EditorSession {
   readonly state: "starting" | "connected" | "terminated";
   start(editor: EditorInstall, projectPath: string, timeoutSec: number): Promise<Result<void, SessionError>>;
-  eval(payload: CompiledPayload, timeoutSec: number): Promise<EvalResult>;
+  eval(payload: CompiledPayload, options: EvalOptions): Promise<EvalResult>;
   requestQuit(timeoutSec: number): Promise<void>;   // 失敗時は内部で kill にフォールバック
   kill(): Promise<void>;                            // 冪等
 }
@@ -558,11 +581,19 @@ interface StatusChannel {
 - Postconditions: `requestQuit` / `kill` 完了後、Editor プロセスは存在しない（`state === "terminated"`）
 - Invariants: 1 インスタンス = 1 Editor プロセス。Scene ごとに新規インスタンスを生成する（D-1）
 
+**pipeline-client の eval トランスポート契約**:
+
+- `file`（P-1 第一候補）: セッション一時ディレクトリへ `payload-<id>-<連番>.cs` を atomic write（temp → rename）→ HTTP API へ `eval_file` リクエストを送信 → 応答受領後に一時ファイルを削除する（失敗経路でも finally で削除。デバッグモード時のみ調査用に保持）。HTTP リクエストの具体的形式（エンドポイントパス・ファイルパスの渡し方・エラー応答形式）はスパイク P-1 で確定し、本契約へ反映する
+- 再試行: 接続レベルの失敗（接続拒否・ソケットタイムアウト）のみ 2 秒間隔で最大 3 回再試行する。eval が受理され C# 実行段階で失敗したものは再試行しない（副作用の二重実行防止）。再試行を使い切った送信失敗は `eval-transport-failed`、C# 実行失敗は `eval-failed` に分類する
+- ログ: デバッグモード時にペイロード ID・サイズ・トランスポート種別・HTTP ステータス・応答本文を時系列で出力する（13.2）
+- `inline-split`（P-1 不成立時のフォールバック）: `compile.ts` がテンプレートを「クラス定義ペイロード + 呼び出しペイロード」に分割し、pipeline-client は同一契約（再試行・ログ・エラー分類）で順次 inline 送信する。分割は `csharp-payloads` / `pipeline-client` 内に閉じ、上位層の呼び出しシグネチャ（`eval(payload, options)`）は不変
+
 **Implementation Notes**
 
 - Integration: com.unity.pipeline の HTTP API 仕様（エンドポイントパス・リクエスト形式・`eval_file` の受け付け形態）は公式ドキュメントに詳細記載がなく、スパイクで確定する。`pipeline-client.ts` に API 依存を隔離する
 - Validation: 接続確立・eval 応答・終了の各段階でデバッグモード時に Unity Editor ログ（`%LOCALAPPDATA%\Unity\Editor\Editor.log`）の末尾を収集してエラーに添付する（7.3 / 13.2）
-- Risks: ポート 7800 の構成可否・他プロセスとの衝突挙動が未確定（スパイク項目）。衝突時は起動前ポート使用チェックで早期エラーとする方針だが、ポートが構成可能と判明すれば設定項目に昇格する
+- ポート 7800 は**固定値として確定**する（設定項目 `pipelinePort` は追加しない）。起動前にポート使用チェックを行い、使用中であれば Editor を起動せず即時に `port-conflict` エラーで失敗する（メッセージで「7800 番ポートを使用するプロセス（既存 Editor を含む）の終了」を案内する）。スパイク P-5 でポートの構成可能性は確認するが、構成可能と判明しても初期リリースでは固定運用とする
+- Risks: 衝突時の Editor / CLI の実挙動が未確定（スパイク項目 P-5）
 
 #### csharp-payloads
 
@@ -624,7 +655,7 @@ interface PayloadCompiler {
 **Implementation Notes**
 
 - MP4 + MOV(ProRes) の同時 2 形式出力は「1 つの RecorderTrack に形式ごとの RecorderClip を並置し、1 回の Play Mode パスで同時収録する」構成を第一候補とする（暫定決定 P-3）。スパイクで同時収録が不安定と判明した場合は、同一 Editor セッション内で形式ごとに収録パスを分ける逐次方式へフォールバックする（設定スキーマ・Handoff 契約は両方式で不変）
-- Risks: eval に渡せる C# のサイズ・複雑さ制約（スパイク項目）。制約が厳しい場合、テンプレートを「クラス定義の事前送信 + 呼び出しの分割送信」に分割する設計余地を残す（テンプレート分割は `compile.ts` 内に閉じるため上位層に影響しない）
+- Risks: eval に渡せる C# のサイズ・複雑さ制約（スパイク項目 P-1）。制約が厳しい場合、テンプレートを「クラス定義の事前送信 + 呼び出しの分割送信」に分割する（editor-session の `EvalTransport` の `inline-split` に対応。テンプレート分割は `compile.ts` / `pipeline-client` 内に閉じるため上位層に影響しない）
 
 ### Orchestration レイヤ
 
@@ -811,6 +842,8 @@ interface HookRegistry {
 
 `RecordingStatus`（editor-session 参照）。セッション一時ディレクトリ内に配置し、C# ペイロードが上書き更新、CLI がポーリング読み取りする。JSON パース失敗（書き込み途中の読み取り）は「変化なし」として次ポーリングへスキップする。
 
+本チャネルはスパイク P-2 成功までは**候補**であり、atomic write 仕様・状態遷移・更新不能時タイムアウト・ドメインリロード後の再適用条件はスパイク後に確定して `RecordingStatus` / `EditorSession` の契約へ反映する（editor-session 参照）。
+
 ## Error Handling
 
 ### Error Strategy
@@ -844,7 +877,9 @@ interface HookRegistry {
 2. project-guard/backup+recovery: バックアップ→改変→復元でバイト一致、`packages-lock.json` 不在プロジェクトの復元（削除）、`active` セッション検出と復旧、atomic 書き込み
 3. project-guard/scene-resolver: 解決成功・不足一覧・同名重複一覧・大文字小文字区別・`Packages/` 除外
 4. batch/output: 全ワイルドカードの展開規則、`<Take>` 採番（既存ファイル走査・欠番・ゼロ埋めなし）、2 形式時のファイル名衝突検証、失敗時削除とデバッグ時保持
-5. unity-env: `ProjectVersion.txt` 解析と 6.0 未満判定、`unity editors -i` 出力パーサ（フィクスチャ固定）、非対話時の自動中断
+5. unity-env: `ProjectVersion.txt` 解析と 6.0 未満判定、`unity editors -i` 出力パーサ（フィクスチャ固定）、非対話時（`interactive === false`）の `install-declined` 自動中断
+6. csharp-payloads: 各 C# ペイロード（open-scene / setup-recorder / start-recording / quit-editor）のパラメータ注入済み出力の**固定スナップショットテスト**、JSON パラメータのエスケープ（引用符・バックスラッシュ・改行・非 ASCII を含む Windows パス）、各テンプレートに必須 API 呼び出し列（`EditorSceneManager.OpenScene`、`hideFlags = DontSave`、`EditorApplication.Exit(0)`、audio capture 無効化等）が含まれることの検証
+7. editor-session / status-channel: ステータス JSON の atomic write / read（temp → rename、部分書き込み JSON の読み取りスキップ）、eval 失敗時のエラー分類（`eval-failed` / `eval-timeout` / `eval-transport-failed` / `port-conflict` の判別）、`file` トランスポートの一時ファイル削除（成功・失敗・デバッグ保持の各経路）
 
 ### Integration Tests（vitest + フェイク）
 
@@ -857,6 +892,7 @@ interface HookRegistry {
 
 1. 検証スパイク（Requirement 1）を実 Unity 6 プロジェクトで実施し、結果を `spike/README.md` に記録
 2. `/kiro:validate-impl` 時の手動シナリオ: 2 Scene バッチ（MP4+MOV）、実行後 `git status` クリーン確認、Editor 強制終了後の次回起動復旧
+3. **Unity 実機依存項目の分離**: 実際の eval / eval_file 受け付け形態、Play Mode・ドメインリロード跨ぎの挙動、ProRes エンコード可否、`EditorApplication.Exit(0)` の実挙動などは Unit / Integration では検証できず、本 E2E（スパイクおよび手動シナリオ）の**明示的な前提条件**として扱う。これらに依存する仕様変更は E2E 再実施なしに確定させない
 
 ### Traceability（artgraph）
 
@@ -872,18 +908,30 @@ interface HookRegistry {
 
 ## Research Needed / スパイク依存の暫定決定
 
-以下は検証スパイク（Requirement 1、**最初の実装タスク**）の実測結果で確定・修正する暫定決定である。スパイクが「書き出し不成立」と判明した場合は後続実装へ進まず、代替方針をユーザーに提示する（1.3）。各項目の確定結果は `spike/README.md` に記録し、本設計へ反映（必要ならセクション更新）してから後続タスクに着手する。
+以下は検証スパイク（Requirement 1、**最初の実装タスク**）の実測結果で確定・修正する暫定決定である。
+
+**実装ゲート（必須・NO-GO 規則）**:
+
+- スパイクは render 本体実装の**必須ゲート**である。`spike/README.md` に 1.2 の全検証項目（P-1〜P-13 の確認内容）・成功基準・失敗基準・実測ログ・ユーザー承認状態を記録する
+- 1.1〜1.2 が完了し、1.3 の「書き出し不成立」に該当しないことを確認するまで、**render 本体の実装タスクおよび P-1〜P-13 の暫定実装の採用を開始してはならない**
+- 不成立時は **NO-GO** とし、後続実装へ進まず、代替方式の再要件化（requirements.md の更新）をユーザーに提示する（1.3）
+- 各項目の確定結果は `spike/README.md` に記録し、本設計へ反映（必要ならセクション更新）してから後続タスクに着手する
 
 | ID | 暫定決定 | スパイクで確認する内容 | 不成立時のフォールバック |
 |----|----------|------------------------|--------------------------|
-| P-1 | eval 送信は一時ファイル + `eval_file` 方式 | eval / eval_file の実際の受け付け形態、C# のサイズ・複雑さ制約（1.2）。公式ドキュメントで `eval` / `eval_file` の存在は確認済みだが仕様詳細は未文書 | インライン eval の分割送信（クラス定義の事前送信 + 呼び出し分離） |
-| P-2 | 完了検知はステータスファイルのポーリング | Play Mode 突入・ドメインリロード中の HTTP API の応答性、`EditorApplication.update` コールバックの Play Mode 跨ぎ生存（1.2） | eval による定期ポーリング（Play Mode 中も API が応答する場合）、または Recorder 出力ファイルのサイズ安定監視 |
-| P-3 | MP4 + MOV(ProRes) は 1 パス同時収録（RecorderClip 並置） | 複数 MovieRecorderSettings の同時収録の安定性、Windows での ProRes エンコーダ利用可否（1.2） | 同一 Editor セッション内での形式別逐次収録（契約は不変）。ProRes 不可なら D-2 の再協議をユーザーに提示 |
-| P-4 | AsyncGPUReadback 同期化は setup-recorder ペイロードから有効化 | 外部（eval）からの同期化設定の可否と具体的手段（Recorder のキャプチャ同期オプション or 毎フレーム `WaitAllRequests()` 呼び出し。1.2） | RecorderClip をラップするカスタム監視で毎フレーム同期呼び出し。いずれも不可なら品質リスクとしてユーザーに提示 |
-| P-5 | ポート 7800 は固定・起動前使用チェックで衝突を早期エラー | ポートの構成可否・衝突時の Editor / CLI の挙動（1.2）。公式ドキュメントに構成方法の記載なし | 構成可能と判明したら設定項目 `pipelinePort` を追加 |
-| P-6 | 動的タイムアウト係数 3 + マージン 180 秒 | 実測の書き出し時間（AsyncGPUReadback 同期込み）と起動・import 時間 | 実測に基づき係数・マージンを更新（設定上書きで運用回避可） |
-| P-7 | Play Mode 突入はドメインリロード既定設定のまま行い、メモリ上 Recorder 構成が Play Mode を跨いで有効かを確認 | ドメインリロードで in-memory RecorderTrack が失われる場合の対処（Enter Play Mode Options の一時変更はProjectSettings を汚すため、保存せずに済むかを含めて検証） | Play Mode 突入後に Recorder 構成を再適用する 2 段ペイロード構成 |
-| P-8 | `unity editors -i` 出力の行パーサ | 実際の出力フォーマット（フィクスチャ採取） | `unity editors` 系の JSON 出力オプションが存在すればそちらへ切替 |
+| P-1 | eval 送信は一時ファイル + `eval_file` 方式 | eval / eval_file の実際の受け付け形態、C# のサイズ・複雑さ制約（1.2）。公式ドキュメントで `eval` / `eval_file` の存在は確認済みだが仕様詳細は未文書。加えて: HTTP リクエストの具体的形式（エンドポイントパス・ファイルパスの渡し方）、一時ファイルの削除タイミング（応答受領後に削除して安全か）、エラー応答の形式、接続失敗時の再試行可否 | インライン eval の分割送信（クラス定義の事前送信 + 呼び出し分離。`EvalTransport` の `inline-split`） |
+| P-2 | 完了検知はステータスファイルのポーリング（**候補**、採用未確定） | Play Mode 突入・ドメインリロード中の HTTP API の応答性、`EditorApplication.update` コールバックの Play Mode 跨ぎ生存（1.2）。加えて: C# 側ステータス JSON の atomic write 可否と部分書き込みの発生条件、過去実行の古い status ファイルの識別方法、Editor 強制終了（クラッシュ・taskkill）時に残る最終状態 | eval による定期ポーリング（Play Mode 中も API が応答する場合）、または Recorder 出力ファイルのサイズ安定監視 |
+| P-3 | MP4 + MOV(ProRes) は 1 パス同時収録（RecorderClip 並置） | 複数 MovieRecorderSettings の同時収録の安定性、Windows での ProRes エンコーダ利用可否（1.2）。加えて: ProRes エンコーダの存在確認方法、各形式の出力ファイル完成条件（ヘッダ確定タイミング等）、RecorderClip 並置の可否、片方の形式のみ失敗した場合の挙動（もう片方の成否と検知方法） | 同一 Editor セッション内での形式別逐次収録（契約は不変）。ProRes 不可なら D-2 の再協議をユーザーに提示 |
+| P-4 | AsyncGPUReadback 同期化は setup-recorder ペイロードから有効化 | 外部（eval）からの同期化設定の可否と具体的手段（Recorder のキャプチャ同期オプション or 毎フレーム `WaitAllRequests()` 呼び出し。1.2）。加えて: 同期化呼び出しの位置（どのコールバック・タイミングで呼ぶか）、Play Mode 中の呼び出し安全性、毎フレーム同期の負荷（フレーム時間への影響）、同期化が効いていない場合の失敗検出方法 | RecorderClip をラップするカスタム監視で毎フレーム同期呼び出し。いずれも不可なら品質リスクとしてユーザーに提示 |
+| P-5 | ポート 7800 は**固定**・起動前使用チェックで使用中なら即時に `port-conflict` で失敗（構成項目 `pipelinePort` は追加しない） | ポートの構成可否・衝突時の Editor / CLI の挙動（1.2）。公式ドキュメントに構成方法の記載なし。加えて: 既存 Editor による 7800 占有の識別方法、ポートの構成可能性（確認のみ。初期リリースは固定運用）、CI での同時実行時の衝突挙動 | 固定運用が成立しない（衝突を事前検知できない等）場合のみ、`RenderConfig`・Preflight・`EditorSession.start`・エラー型・テストフィクスチャへの `pipelinePort` 追加を再検討 |
+| P-6 | 動的タイムアウト係数 3 + マージン 180 秒 | 実測の書き出し時間（AsyncGPUReadback 同期込み）と起動・import 時間。加えて: Editor 起動・パッケージ import・ドメインリロード・ProRes エンコード・初回起動遅延（コールドスタート）を**個別に計測**し、係数・マージンの内訳を確定 | 実測に基づき係数・マージンを更新（設定上書きで運用回避可） |
+| P-7 | Play Mode 突入はドメインリロード既定設定のまま行い、メモリ上 Recorder 構成が Play Mode を跨いで有効かを確認 | ドメインリロードで in-memory RecorderTrack が失われる場合の対処（Enter Play Mode Options の一時変更はProjectSettings を汚すため、保存せずに済むかを含めて検証）。加えて: RecorderTrack / RecorderClip / MovieRecorderSettings / ステータス書き込み監視コールバックの**各オブジェクトの生存状態を個別に確認** | Play Mode 突入後に Recorder 構成を再適用する 2 段ペイロード構成（不成立時は `setup-recorder` 再適用を**必須**とする。editor-session 参照） |
+| P-8 | `unity editors -i` 出力の行パーサ | 実際の出力フォーマット（フィクスチャ採取）。加えて: バージョン文字列の形式、パス中の空白・引用符の扱い、複数 Editor インストール環境での出力、OS ロケールによる出力差異、コマンドの終了コード | `unity editors` 系の JSON 出力オプションが存在すればそちらへ切替 |
+| P-9 | `com.unity.recorder` / `com.unity.pipeline` は動作確認済みバージョンをピン止めして一時追加 | 実パッケージバージョンの選定（動作確認した具体バージョン）と Unity 6.x マイナーバージョン間の互換性 | 単一バージョンで互換性が取れない場合は Unity バージョン帯ごとのピン止めバージョン表を project-guard に導入 |
+| P-10 | MovieRecorderSettings は Recorder 既定値をベースに解像度・FPS・範囲を上書き | MP4 / MOV(ProRes) それぞれの具体的な RecorderSettings 設定値、Windows でのエンコーダ有無、解像度・FPS 上書きの適用結果（出力ファイルの実測値で確認） | 適用不能な設定値は設定スキーマから除外または警告に降格し、D-2 の再協議をユーザーに提示 |
+| P-11 | quit-editor は `EditorApplication.Exit(0)` で保存ダイアログを経由せず終了 | GUI Editor での保存確認ダイアログの抑止可否と `EditorApplication.Exit(0)` の実挙動（シーン・アセットがダーティな状態での即時終了） | ダイアログが出る場合は Exit 前にダーティ状態を破棄する処理を追加。それも不可なら強制終了（`taskkill`）を正規の終了経路に昇格し 11.1 の達成手段を再定義 |
+| P-12 | 復元は「バックアップコピーの上書き書き戻し」 | `manifest.json` / `packages-lock.json` 復元中にプロセスが終了した場合の atomicity（部分書き込みファイルが残るか） | 書き戻しを temp file → rename の atomic 方式へ変更し、途中終了時もクラッシュ復旧（session.json `active`）で再復元可能なことを確認 |
+| P-13 | フックは HookPhase（出力検証成功後・Editor 終了前）で発火し、主映像は `formats` 先頭 | `RenderHandoff` の実運用タイミング（出力ファイル確定と Editor 接続維持が両立するか）、複数形式出力時の主映像・追加映像（`videoPath` / `additionalOutputs`）の選択規則の妥当性 | タイミングが成立しない場合はフック地点の再設計（`evalCSharp` 提供可否を含む）を Spec 2 と再協議する（Revalidation Trigger） |
 
 **恒常的リスク（スパイクで解消しないもの)**: `com.unity.pipeline` は beta / experimental であり破壊的変更リスクが恒常的に残る。`docs/setup.md` に明記し（1.4）、`pipeline-client.ts` への API 依存隔離と CLI バージョン検出で影響範囲を限定する。
 
