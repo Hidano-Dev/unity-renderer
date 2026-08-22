@@ -171,7 +171,7 @@
   - _Requirements: 7.1, 7.2, 7.3_
   - Files: src/editor-session/session.ts, tests/editor-session/session.test.ts
 
-- [ ] 7.2 eval トランスポート（pipeline クライアント）を実装する
+- [x] 7.2 eval トランスポート（pipeline クライアント）を実装する
   - スパイクで確定した送信方式（一時ファイル + eval_file を第一候補、不成立時は分割 inline）による eval 送信を実装する
   - 接続レベル失敗のみの限定再試行、送信失敗と C# 実行失敗のエラー分類、一時ファイルの finally 削除（デバッグ時保持）を実装する
   - デバッグモード時のペイロード ID・サイズ・HTTP 応答の時系列ログを実装する
