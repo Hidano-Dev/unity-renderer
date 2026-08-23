@@ -51,7 +51,7 @@
   - _Requirements: 12.2, 12.3_
   - Files: spike/timeline-audio/README.md, .kiro/specs/timeline-audio-remux/design.md
 
-- [ ] 2. Unity 非依存の純 TS 基盤（メタデータ・時間計算）を実装する
+- [x] 2. Unity 非依存の純 TS 基盤（メタデータ・時間計算）を実装する
 - [x] 2.1 (P) 音声メタデータ JSON スキーマと検証・音源存在確認を実装する
   - 音声メタデータ JSON の zod スキーマ（schemaVersion・クリップ属性一式・errors / warnings）を本 Spec の責務として定義し、TypeScript 型をスキーマから導出する
   - 受領 JSON の検証順序（パース → スキーマ検証 → schemaVersion 一致 → errors 空確認 → 全クリップの音源ファイル存在確認）を実装し、不適合箇所（zod issue パス / 欠落ファイルパスとクリップ ID）を特定できるエラーを返す
@@ -71,7 +71,7 @@
   - _Boundary: planner/time-math_
   - Files: src/audio-remux/planner/time-math.ts, tests/audio-remux/planner/time-math.test.ts
 
-- [ ] 2.3 MixPlan（ffmpeg 配置計画）構築を実装する
+- [x] 2.3 MixPlan（ffmpeg 配置計画）構築を実装する
   - 検証済みメタデータと RenderHandoff（イン/アウト点）から、配置済みクリップ一覧（トリム区間・速度・ゲイン・遅延サンプル・ループフラグ）を構築する
   - ミュートトラック上のクリップの除外と、ゲインのクリップ音量 × トラック音量への畳み込みを実装する
   - 採用クリップ ∪ スキップ（理由付き）∪ ミュート除外 = メタデータ全クリップとなる取りこぼしなしの変換を保証する
