@@ -13,6 +13,23 @@ const success: SceneResult = {
 	durationSec: 12.345,
 };
 
+describe("scene warnings", () => {
+	it("prints warnings such as the implicit Director choice (8.3)", () => {
+		const lines: string[] = [];
+		createProgressReporter({ write: (m) => lines.push(m) }).sceneFinished({
+			sceneName: "Intro",
+			outcome: "success",
+			warnings: [
+				"Multiple root PlayableDirector components found; the first was selected.",
+			],
+			outputs: [],
+			durationSec: 1,
+		});
+
+		expect(lines.join("")).toContain("警告: Multiple root PlayableDirector");
+	});
+});
+
 describe("progress reporting", () => {
 	it("prints the scene, outcome, duration, and a plain path for non-TTY output", () => {
 		const output: string[] = [];

@@ -56,6 +56,23 @@ describe("output file name wildcards", () => {
 		}
 	});
 
+	it("rejects a resolution beyond what Recorder and C# Int32 can handle", () => {
+		const result = validateRenderConfig({
+			projectPath: "C:\\work\\unity-project",
+			scenes: ["Main"],
+			resolution: { width: 2_147_483_648, height: 1080 },
+			frameRate: 30,
+			formats: ["mp4"],
+			output: { directory: "C:\\renders", fileName: "render" },
+		});
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.issues[0]?.path).toBe("resolution.width");
+			expect(result.error.issues[0]?.message).toContain("16384");
+		}
+	});
+
 	it("accepts every supported wildcard", () => {
 		const result = validateRenderConfig({
 			projectPath: "C:\\work\\unity-project",

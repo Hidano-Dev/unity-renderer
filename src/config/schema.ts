@@ -12,6 +12,16 @@ const nonEmptyString = z.string().trim().min(1, "must not be empty");
 const positiveNumber = z.number().finite().positive();
 const positiveInteger = z.number().int().positive();
 
+/**
+ * Recorder と C# 側が扱える解像度の上限。Editor 起動後の OverflowException や
+ * テクスチャ確保失敗ではなく、preflight で報告するために設ける。
+ */
+const MAX_RESOLUTION_PIXELS = 16_384;
+const resolutionAxis = positiveInteger.max(
+	MAX_RESOLUTION_PIXELS,
+	`must not exceed ${MAX_RESOLUTION_PIXELS} pixels (Recorder and GPU limit)`,
+);
+
 const rangeSchema = z
 	.object({
 		inPoint: z.number().finite().nonnegative(),
@@ -75,11 +85,15 @@ export const renderConfigSchema = z
 		range: rangeSchema.optional(),
 		resolution: z
 			.object({
-				width: positiveInteger,
-				height: positiveInteger,
+				width: resolutionAxis,
+				height: resolutionAxis,
 			})
 			.strict(),
-		frameRate: positiveNumber,
+		// 上限は Recorder の実用域。録画フレーム数が Int32 を溢れないようにも効く
+		frameRate: positiveNumber.max(
+			1_000,
+			"must not exceed 1000 (Recorder practical limit)",
+		),
 		formats: z
 			.array(z.enum(["mp4", "mov-prores"]))
 			.min(1, "must contain at least one format")

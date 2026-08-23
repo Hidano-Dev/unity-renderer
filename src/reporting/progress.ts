@@ -73,6 +73,8 @@ export function createProgressReporter(
 			emit(
 				`${result.sceneName}: ${result.outcome === "success" ? "成功" : "失敗"} (${result.durationSec.toFixed(2)}s)`,
 			);
+			// Requirement 8.3: 複数 Director の暗黙選択などの警告を必ず表示する
+			for (const warning of result.warnings) emit(`警告: ${warning}`);
 			if (result.outcome === "failure") {
 				if (result.failureReason) emit(`失敗理由: ${result.failureReason}`);
 				if (result.error) emit(`詳細: ${result.error}`);

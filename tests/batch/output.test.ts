@@ -266,6 +266,39 @@ describe("staging and promotion", () => {
 		await expect(stat(journalPath)).rejects.toThrow();
 	});
 
+	it("journals the displacement plan before renaming, including entries never executed", async () => {
+		const { readFile, stat } = await import("node:fs/promises");
+		const directory = await temporaryDirectory();
+		const journalPath = join(directory, "promote-Intro.json");
+		const shared = join(directory, "render_Intro.mp4");
+		// 1 件目は既存出力が無く退避 rename が実行されない。2 件目で公開に失敗し、
+		// 巻き戻しも完了しないためジャーナルが保全される
+		const outputs = [
+			{
+				format: "mp4" as const,
+				path: shared,
+				stagingPath: join(directory, "a.urc-partial.mp4"),
+			},
+			{
+				format: "mov-prores" as const,
+				path: shared,
+				stagingPath: join(directory, "missing.urc-partial.mov"),
+			},
+		];
+		await writeFile(outputs[0]?.stagingPath ?? "", "new");
+
+		await expect(promoteOutputFiles(outputs, { journalPath })).rejects.toThrow(
+			/手動復旧/,
+		);
+
+		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+			displaced: { path: string; backup: string }[];
+		};
+		// rename より先に記録するため、実行されなかった退避も予定として残る
+		expect(journal.displaced).toHaveLength(2);
+		await expect(stat(journal.displaced[0]?.backup ?? "")).rejects.toThrow();
+	});
+
 	it("reports unresolved files when the rollback itself fails", async () => {
 		const directory = await temporaryDirectory();
 		const shared = join(directory, "render_Intro.mp4");

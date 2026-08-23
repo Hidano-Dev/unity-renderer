@@ -202,18 +202,23 @@ export async function promoteOutputFiles(
 	outputs: readonly PlannedOutput[],
 	options: PromoteOptions = {},
 ): Promise<void> {
+	// 退避「予定」を rename より先に記録する。記録前に落ちれば退避もされておらず、
+	// 記録後に落ちた場合は復旧が退避先を辿れる。退避が実行されなかった予定は
+	// 復旧時に退避先が存在しないため無視される
+	const planned: { readonly path: string; readonly backup: string }[] = [];
 	const displaced: { readonly path: string; readonly backup: string }[] = [];
 	const promoted: PlannedOutput[] = [];
 	try {
 		for (const output of outputs) {
 			const backup = `${output.path}.${randomUUID()}.previous`;
+			planned.push({ path: output.path, backup });
+			if (options.journalPath)
+				await writePromotionJournal(options.journalPath, {
+					displaced: planned,
+				});
 			try {
 				await rename(output.path, backup);
 				displaced.push({ path: output.path, backup });
-				// 退避先はプロセス終了に耐える形で先に記録する。rename の直後に落ちても
-				// 次回起動の復旧が旧出力を戻せる
-				if (options.journalPath)
-					await writePromotionJournal(options.journalPath, { displaced });
 			} catch (error) {
 				// 既存出力が無いのが通常。それ以外の失敗は公開を中止する
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
