@@ -18,6 +18,8 @@ function dependencies(overrides: Partial<SessionDependencies> = {}) {
 		isReachable: vi.fn(async () => true),
 		killProcess: vi.fn(async () => undefined),
 		sleep: vi.fn(async () => undefined),
+		isProjectLocked: vi.fn(async () => false),
+		resolvePidByPort: vi.fn(async () => undefined),
 		...overrides,
 	};
 }
@@ -59,7 +61,10 @@ describe("EditorSession", () => {
 	});
 
 	it("kills the Editor when the connection timeout expires", async () => {
-		const deps = dependencies({ isReachable: vi.fn(async () => false) });
+		const deps = dependencies({
+			isReachable: vi.fn(async () => false),
+			isProjectLocked: vi.fn(async () => false),
+		});
 		const session = createEditorSession({ ...deps, pollIntervalMs: 1 });
 
 		const result = await session.start(editor, "C:\\projects\\demo", 0.001);
@@ -70,6 +75,25 @@ describe("EditorSession", () => {
 		});
 		expect(deps.killProcess).toHaveBeenCalledWith(1234);
 		expect(session.state).toBe("terminated");
+	});
+
+	it("flags a surviving Editor detected by the project lock after a timeout", async () => {
+		const deps = dependencies({
+			isReachable: vi.fn(async () => false),
+			// ポートは掴んでいないが、プロジェクトを開いたままの Editor が残っている
+			isPortInUse: vi
+				.fn()
+				.mockResolvedValueOnce(false)
+				.mockResolvedValue(false),
+			isProjectLocked: vi.fn(async () => true),
+			pollIntervalMs: 1,
+		});
+		const session = createEditorSession(deps);
+
+		const result = await session.start(editor, "C:\\projects\\demo", 0.001);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.terminationFailed).toBe(true);
 	});
 
 	it("flags a failed kill on the connection timeout path", async () => {

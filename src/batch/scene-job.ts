@@ -80,7 +80,10 @@ export interface SceneJobDependencies {
 		debug: boolean,
 	) => Promise<void>;
 	readonly validate?: (paths: readonly string[]) => Promise<readonly string[]>;
-	readonly promote?: (outputs: readonly PlannedOutput[]) => Promise<void>;
+	readonly promote?: (
+		outputs: readonly PlannedOutput[],
+		options?: { readonly journalPath?: string },
+	) => Promise<void>;
 	readonly planOutputs?: typeof planOutputs;
 	readonly logger?: {
 		warn(message: string): void;
@@ -337,8 +340,14 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 						failureReason: "recording-failed" as const,
 					});
 				await validate(outputs.map((output) => output.stagingPath));
-				// 検証を通過した時点で初めて最終パスへ公開する
-				await promote(outputs);
+				// 検証を通過した時点で初めて最終パスへ公開する。退避情報はセッション
+				// ディレクトリのジャーナルへ記録し、公開中のクラッシュに備える
+				await promote(outputs, {
+					journalPath: join(
+						plan.sessionDir,
+						`promote-${plan.scene.sceneName}.json`,
+					),
+				});
 				promoted = true;
 				const handoff: RenderHandoff = {
 					sceneName: plan.scene.sceneName,

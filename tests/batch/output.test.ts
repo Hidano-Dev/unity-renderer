@@ -224,6 +224,71 @@ describe("staging and promotion", () => {
 		).toEqual([]);
 	});
 
+	it("journals displaced outputs so a crash mid-promotion stays recoverable", async () => {
+		const { readFile, stat } = await import("node:fs/promises");
+		const { rollbackPromotionJournal } = await import(
+			"../../src/shared/promotion-journal.js"
+		);
+		const directory = await temporaryDirectory();
+		const journalPath = join(directory, "promote-Intro.json");
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>",
+			formats: ["mp4", "mov-prores"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+		for (const output of outputs) {
+			await writeFile(output.path, `previous ${output.format}`);
+			await writeFile(output.stagingPath, `new ${output.format}`);
+		}
+		// 2 件目の staging を失わせ、公開の途中で中断させる
+		await (await import("node:fs/promises")).rm(outputs[1]?.stagingPath ?? "");
+		await expect(
+			promoteOutputFiles(outputs, { journalPath }),
+		).rejects.toThrow();
+
+		// 例外経路では巻き戻し済みなのでジャーナルは残らない
+		await expect(stat(journalPath)).rejects.toThrow();
+
+		// クラッシュを模擬: 退避だけ済んだ状態のジャーナルから復旧できる
+		const displacedBackup = join(directory, "orphan.previous");
+		await writeFile(displacedBackup, "previous mp4");
+		await (await import("node:fs/promises")).rm(outputs[0]?.path ?? "");
+		await writeFile(
+			journalPath,
+			JSON.stringify({
+				displaced: [{ path: outputs[0]?.path, backup: displacedBackup }],
+			}),
+		);
+
+		expect(await rollbackPromotionJournal(journalPath)).toEqual([]);
+		expect(await readFile(outputs[0]?.path ?? "", "utf8")).toBe("previous mp4");
+		await expect(stat(journalPath)).rejects.toThrow();
+	});
+
+	it("reports unresolved files when the rollback itself fails", async () => {
+		const directory = await temporaryDirectory();
+		const shared = join(directory, "render_Intro.mp4");
+		// 1 件目の公開後に同じ最終パスが 2 件目の退避で持ち去られ、巻き戻しの
+		// rename が対象を見失う状況(補償処理自体の失敗)
+		const outputs = [
+			{
+				format: "mp4" as const,
+				path: shared,
+				stagingPath: join(directory, "render_Intro.urc-partial.mp4"),
+			},
+			{
+				format: "mov-prores" as const,
+				path: shared,
+				stagingPath: join(directory, "missing.urc-partial.mov"),
+			},
+		];
+		await writeFile(shared, "previous");
+		await writeFile(outputs[0]?.stagingPath ?? "", "new");
+
+		await expect(promoteOutputFiles(outputs)).rejects.toThrow(/手動復旧/);
+	});
+
 	it("ignores staging leftovers when choosing the next take", async () => {
 		const directory = await temporaryDirectory();
 		await writeFile(join(directory, "render_Intro_7.urc-partial.mp4"), "junk");

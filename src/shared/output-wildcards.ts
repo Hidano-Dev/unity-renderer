@@ -35,6 +35,47 @@ export function outputWildcardListText(): string {
 	return OUTPUT_WILDCARDS.map((value) => `<${value}>`).join(", ");
 }
 
+/** 認識済みワイルドカードを展開後の代表値へ置き換えた、検証用の文字列。 */
+function withoutWildcards(fileName: string): string {
+	return fileName.replace(/<([^>]+)>/gu, (match, name: string) =>
+		(OUTPUT_WILDCARDS as readonly string[]).includes(name) ? "x" : match,
+	);
+}
+
+const WINDOWS_RESERVED_NAMES =
+	/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu;
+const WINDOWS_FORBIDDEN_CHARACTERS = /[<>:"/\\|?*]/u;
+
+/** 制御文字はファイル名に使えない。正規表現へ埋め込まずに走査する。 */
+function controlCharacterIn(value: string): string | undefined {
+	for (const character of value) {
+		const code = character.codePointAt(0) ?? 0;
+		if (code < 0x20 || code === 0x7f) return character;
+	}
+	return undefined;
+}
+
+/**
+ * Windows で作成できないファイル名を preflight で弾く。Editor 起動と manifest の
+ * 一時変更を経てから Recorder / ファイル操作で失敗するのを避けるため、`check` の
+ * 時点で項目付きエラーにする。認識済みワイルドカードの `<>` は検査対象から外す。
+ */
+export function invalidWindowsFileNameReason(
+	fileName: string,
+): string | undefined {
+	const candidate = withoutWildcards(fileName);
+	const forbidden = candidate.match(WINDOWS_FORBIDDEN_CHARACTERS);
+	if (forbidden)
+		return `must not contain the Windows-reserved character ${JSON.stringify(forbidden[0])}`;
+	if (controlCharacterIn(candidate))
+		return "must not contain control characters";
+	if (/[ .]$/u.test(candidate))
+		return "must not end with a space or a dot on Windows";
+	if (WINDOWS_RESERVED_NAMES.test(candidate))
+		return "must not use a Windows reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)";
+	return undefined;
+}
+
 export function assertOutputWildcards(fileName: string): void {
 	const unknown = unknownOutputWildcards(fileName);
 	if (unknown.length > 0)

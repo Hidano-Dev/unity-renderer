@@ -1,5 +1,6 @@
 import { execFile, spawn as spawnProcess } from "node:child_process";
 import { promisify } from "node:util";
+import { checkProjectLock } from "../project-guard/lock.js";
 import { err, ok, type Result } from "../shared/types.js";
 import type { EditorInstall } from "../unity-env/editors.js";
 
@@ -32,6 +33,8 @@ export interface SessionDependencies {
 	readonly sleep?: (milliseconds: number) => Promise<void>;
 	readonly pollIntervalMs?: number;
 	readonly resolvePidByPort?: (port: number) => Promise<number | undefined>;
+	/** プロジェクトを開いている Editor が生存しているか(Temp/UnityLockfile の所有)。 */
+	readonly isProjectLocked?: (projectPath: string) => Promise<boolean>;
 }
 
 export interface EditorSession {
@@ -85,8 +88,10 @@ async function defaultIsProcessAlive(pid: number): Promise<boolean> {
 	try {
 		process.kill(pid, 0);
 		return true;
-	} catch {
-		return false;
+	} catch (cause) {
+		// EPERM は「プロセスは存在するがシグナル送信権限が無い」。死亡と誤判定すると
+		// 生存 Editor を終了済みとみなし、後続 Scene と復元が並行してしまう
+		return (cause as NodeJS.ErrnoException).code === "EPERM";
 	}
 }
 
@@ -126,6 +131,9 @@ export function createEditorSession(
 	const pollIntervalMs = dependencies.pollIntervalMs ?? 2_000;
 	const resolvePidByPort =
 		dependencies.resolvePidByPort ?? defaultResolvePidByPort;
+	const isProjectLocked =
+		dependencies.isProjectLocked ??
+		(async (projectPath: string) => !(await checkProjectLock(projectPath)).ok);
 
 	const kill = async (): Promise<void> => {
 		if (killPromise) return killPromise;
@@ -212,12 +220,30 @@ export function createEditorSession(
 				);
 			}
 
+			// 追跡している PID は短命なランチャーのものかもしれない。7800 を握る
+			// 実プロセスが判明すればそちらを終了対象にする
+			pid = (await resolvePidByPort(PIPELINE_PORT)) ?? pid;
 			let killNote = "";
 			let terminationFailed = false;
 			await kill().catch((cause) => {
 				terminationFailed = true;
 				killNote = ` さらに ${cause instanceof Error ? cause.message : String(cause)}`;
 			});
+			// ランチャーの終了は Editor 本体の終了を意味しない。ポート占有と
+			// プロジェクトロックで生存 Editor の有無を確かめ、残っていれば
+			// バッチを止められるよう terminationFailed として報告する
+			if (!terminationFailed) {
+				const portHeld = await isPortInUse(PIPELINE_PORT);
+				const projectHeld = await isProjectLocked(projectPath).catch(
+					() => false,
+				);
+				if (portHeld || projectHeld) {
+					terminationFailed = true;
+					killNote = portHeld
+						? " 7800 番ポートを占有するプロセスが残っています。Unity Editor を手動で終了してください。"
+						: " プロジェクトを開いたままの Unity Editor が残っています。手動で終了してください。";
+				}
+			}
 			return err({
 				kind: "connect-timeout",
 				message: `Unity Editor への接続が ${timeoutSec} 秒以内に確立できませんでした。Editor.log を確認してください。${killNote}`,
@@ -230,6 +256,10 @@ export function createEditorSession(
 				return;
 			}
 
+			// 期限は quit 要求の前に確定させる。要求(eval)と終了待機で別々に
+			// timeoutSec を使うと、契約上の「N 秒以内に終了しなければ強制終了」が
+			// 最大 2N 秒に伸び、Scene ごとにバッチが長時間停止する
+			const deadline = Date.now() + timeoutSec * 1_000;
 			try {
 				await requestQuit();
 			} catch {
@@ -237,7 +267,6 @@ export function createEditorSession(
 			}
 
 			const processId = pid;
-			const deadline = Date.now() + timeoutSec * 1_000;
 			while (Date.now() < deadline) {
 				if (!(await isProcessAlive(processId))) {
 					pid = undefined;

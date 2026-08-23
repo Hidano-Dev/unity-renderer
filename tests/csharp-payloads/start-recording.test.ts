@@ -74,6 +74,18 @@ describe("start-recording payload (stage 2: rebuild in Play Mode and record)", (
 		expect(source).toContain('\\"reason\\":');
 	});
 
+	it("parses JSON numbers written in exponent notation", () => {
+		const source = compilePayload("start-recording", {
+			...params,
+			frameRate: 1e-7,
+		}).source;
+
+		// 指数表記の値がそのまま渡るため、C# 側も指数部を含めて解析する必要がある
+		expect(source).toContain("1e-7");
+		expect(source).toContain("[eE][+-]?[0-9]+");
+		expect(source).toContain("NumberStyles.Float");
+	});
+
 	it("injects recorder parameters through JSON", () => {
 		const source = compilePayload("start-recording", {
 			...params,

@@ -17,10 +17,20 @@ string JsonString(string json, string key)
 }
 string JsonNumber(string json, string key)
 {
-    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\\\\"" + key + "\\\\\\"\\\\s*:\\\\s*(-?[0-9]+(?:\\\\.[0-9]+)?)");
+    // JSON.stringify は 1e-7 のような指数表記を出す。指数部を取り込まないと
+    // 先頭の仮数だけを拾い、検証済み設定と異なる値で録画してしまう
+    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\\\\"" + key + "\\\\\\"\\\\s*:\\\\s*(-?[0-9]+(?:\\\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)\\\\s*(?=[,}])");
     if (!match.Success)
         throw new System.ArgumentException("Missing required payload parameter: " + key);
     return match.Groups[1].Value;
+}
+double ParseDouble(string value)
+{
+    return double.Parse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+}
+int ParseInt(string value)
+{
+    return checked((int)System.Math.Round(ParseDouble(value)));
 }
 string JsonEscape(string value)
 {
@@ -35,11 +45,11 @@ if (!UnityEngine.Application.isPlaying)
 var statusPath = JsonString(parametersJson, "statusPath");
 var operationId = JsonString(parametersJson, "operationId");
 var directorName = JsonString(parametersJson, "directorName");
-var width = int.Parse(JsonNumber(parametersJson, "width"), System.Globalization.CultureInfo.InvariantCulture);
-var height = int.Parse(JsonNumber(parametersJson, "height"), System.Globalization.CultureInfo.InvariantCulture);
-var frameRate = double.Parse(JsonNumber(parametersJson, "frameRate"), System.Globalization.CultureInfo.InvariantCulture);
-var inPoint = double.Parse(JsonNumber(parametersJson, "inPoint"), System.Globalization.CultureInfo.InvariantCulture);
-var outPoint = double.Parse(JsonNumber(parametersJson, "outPoint"), System.Globalization.CultureInfo.InvariantCulture);
+var width = ParseInt(JsonNumber(parametersJson, "width"));
+var height = ParseInt(JsonNumber(parametersJson, "height"));
+var frameRate = ParseDouble(JsonNumber(parametersJson, "frameRate"));
+var inPoint = ParseDouble(JsonNumber(parametersJson, "inPoint"));
+var outPoint = ParseDouble(JsonNumber(parametersJson, "outPoint"));
 
 var statusDirectory = System.IO.Path.GetDirectoryName(statusPath);
 if (string.IsNullOrEmpty(statusDirectory))

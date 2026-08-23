@@ -194,14 +194,27 @@ describe("serial batch runner", () => {
 			{
 				...plan,
 				scenes: [plan.scenes[0] as NonNullable<(typeof plan.scenes)[number]>],
+				session: {
+					...plan.session,
+					files: [
+						{
+							relativePath: "Packages/manifest.json",
+							backupFileName: "manifest.json",
+							sha256: "abc",
+							exists: true,
+						},
+					],
+				},
 			},
 			undefined,
 			reporter,
 		);
 
 		expect(batch.restoreSucceeded).toBe(false);
-		expect(reporter.warn).toHaveBeenCalledWith(
-			"Project restoration failed: restore failed",
-		);
+		// 復元失敗時はバックアップの所在と手動復旧手順まで提示する
+		const warning = reporter.warn.mock.calls.flat().join("\n");
+		expect(warning).toContain("Project restoration failed: restore failed");
+		expect(warning).toContain(plan.session.sessionDirectory);
+		expect(warning).toContain("Copy-Item");
 	});
 });

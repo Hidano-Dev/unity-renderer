@@ -57,6 +57,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          # PowerShell 7.3+ は native コマンドの非ゼロ終了を ErrorActionPreference に
+          # 従って終了エラーへ変換する。この smoke test は check が「失敗すること」を
+          # 検証するため、その変換を無効化する (PS 5.1 では未定義だが代入は無害)
+          $PSNativeCommandUseErrorActionPreference = $false
           $exe = Join-Path $env:GITHUB_WORKSPACE "dist\unity-render.exe"
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             throw "Build did not produce dist/unity-render.exe"
@@ -71,11 +75,17 @@ jobs:
               throw "The compiled executable failed the init smoke test"
             }
 
-            & $exe check render-config.json 2>&1 | Tee-Object -Variable checkOutput
-            if ($LASTEXITCODE -eq 0) {
+            # check の stderr が終了エラーとして扱われないよう、この区間だけ緩める
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $checkOutput = (& $exe check render-config.json 2>&1 | Out-String)
+            $checkExit = $LASTEXITCODE
+            $ErrorActionPreference = $previous
+            Write-Host $checkOutput
+            if ($checkExit -eq 0) {
               throw "check unexpectedly succeeded without a Unity installation"
             }
-            if (($checkOutput -join "`n") -notmatch "Unity CLI|unity") {
+            if ($checkOutput -notmatch "Unity CLI|unity") {
               throw "The compiled executable did not reach the check command"
             }
           } finally {

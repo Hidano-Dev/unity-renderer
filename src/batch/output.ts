@@ -8,6 +8,7 @@ import {
 	type OutputWildcard,
 	outputWildcardNames,
 } from "../shared/output-wildcards.js";
+import { writePromotionJournal } from "../shared/promotion-journal.js";
 
 /** @impl URC-3.1 @impl URC-3.2 @impl URC-10.3 @impl URC-10.7 */
 
@@ -189,8 +190,17 @@ export async function planOutputs(
  * 正常な動画も失われる。そのため既存出力を退避してから置換し、途中で失敗したら
  * 置換済みを staging へ戻し、退避した既存出力を復帰させる。
  */
+export interface PromoteOptions {
+	/**
+	 * 退避情報を記録するジャーナルのパス。プロセスや OS が公開の途中で落ちても、
+	 * 次回起動の復旧がここから旧出力を戻せるようにする。
+	 */
+	readonly journalPath?: string;
+}
+
 export async function promoteOutputFiles(
 	outputs: readonly PlannedOutput[],
+	options: PromoteOptions = {},
 ): Promise<void> {
 	const displaced: { readonly path: string; readonly backup: string }[] = [];
 	const promoted: PlannedOutput[] = [];
@@ -200,6 +210,10 @@ export async function promoteOutputFiles(
 			try {
 				await rename(output.path, backup);
 				displaced.push({ path: output.path, backup });
+				// 退避先はプロセス終了に耐える形で先に記録する。rename の直後に落ちても
+				// 次回起動の復旧が旧出力を戻せる
+				if (options.journalPath)
+					await writePromotionJournal(options.journalPath, { displaced });
 			} catch (error) {
 				// 既存出力が無いのが通常。それ以外の失敗は公開を中止する
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -208,13 +222,27 @@ export async function promoteOutputFiles(
 			promoted.push(output);
 		}
 	} catch (cause) {
+		// 補償処理の失敗を握り潰すと、旧動画の欠落や形式間の世代混在が
+		// 通常の公開失敗と区別できなくなる。残存物を添えて報告する
+		const unresolved: string[] = [];
 		for (const output of promoted)
-			await rename(output.path, output.stagingPath).catch(() => undefined);
+			await rename(output.path, output.stagingPath).catch(() =>
+				unresolved.push(`公開済みを staging へ戻せません: ${output.path}`),
+			);
 		for (const { path, backup } of displaced)
-			await rename(backup, path).catch(() => undefined);
+			await rename(backup, path).catch(() =>
+				unresolved.push(`退避した旧出力を戻せません: ${backup} → ${path}`),
+			);
+		if (unresolved.length > 0)
+			throw new Error(
+				`出力の公開に失敗し、巻き戻しも完了しませんでした: ${cause instanceof Error ? cause.message : String(cause)}\n手動復旧が必要です:\n- ${unresolved.join("\n- ")}`,
+				{ cause },
+			);
+		if (options.journalPath) await rm(options.journalPath, { force: true });
 		throw cause;
 	}
 	for (const { backup } of displaced) await rm(backup, { force: true });
+	if (options.journalPath) await rm(options.journalPath, { force: true });
 }
 
 export async function validateOutputFiles(

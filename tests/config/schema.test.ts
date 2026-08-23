@@ -32,6 +32,30 @@ describe("output file name wildcards", () => {
 		}
 	});
 
+	// 前後の空白は nonEmptyString の trim で除去されるため、ここでは扱わない
+	it.each([
+		["render:final", "Windows-reserved character"],
+		["clip?", "Windows-reserved character"],
+		["take*", "Windows-reserved character"],
+		["CON", "reserved device name"],
+		["LPT1.mp4", "reserved device name"],
+	])("rejects the Windows-invalid name %s at preflight", (fileName, reason) => {
+		const result = validateRenderConfig({
+			projectPath: "C:\\work\\unity-project",
+			scenes: ["Main"],
+			resolution: { width: 1920, height: 1080 },
+			frameRate: 30,
+			formats: ["mp4"],
+			output: { directory: "C:\\renders", fileName },
+		});
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.issues[0]?.path).toBe("output.fileName");
+			expect(result.error.issues[0]?.message).toContain(reason);
+		}
+	});
+
 	it("accepts every supported wildcard", () => {
 		const result = validateRenderConfig({
 			projectPath: "C:\\work\\unity-project",

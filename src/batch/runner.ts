@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { RenderConfig } from "../config/schema.js";
 import { compilePayload } from "../csharp-payloads/compile.js";
 import type { PipelineClient } from "../editor-session/pipeline-client.js";
@@ -59,6 +60,35 @@ export interface BatchRunner {
 		hooks?: RenderHooks,
 		reporter?: ProgressReporter,
 	): Promise<BatchResult>;
+}
+
+/**
+ * 復元に失敗したときは、プロジェクトが一時変更されたまま残る。ユーザーが自力で
+ * 戻せるよう、バックアップの所在とファイルごとのコピー手順を必ず提示する
+ * (design の Error Strategy 要件)。
+ */
+function manualRecoveryGuidance(
+	session: BackupSession,
+	error: GuardError,
+): string {
+	const lines = [
+		`Project restoration failed: ${error.message}`,
+		`バックアップの所在: ${session.sessionDirectory}`,
+	];
+	if (error.manualRecoveryHint) lines.push(error.manualRecoveryHint);
+	lines.push("手動復旧の手順(PowerShell):");
+	for (const file of session.files) {
+		const target = join(session.projectPath, file.relativePath);
+		lines.push(
+			file.exists
+				? `  Copy-Item -LiteralPath "${join(session.sessionDirectory, file.backupFileName)}" -Destination "${target}" -Force`
+				: `  Remove-Item -LiteralPath "${target}" -Force  # 実行前は存在しなかったファイル`,
+		);
+	}
+	lines.push(
+		`復旧後、このセッションディレクトリを削除してください: ${session.sessionDirectory}`,
+	);
+	return lines.join("\n");
 }
 
 function unexpectedSceneFailure(
@@ -202,7 +232,7 @@ export function createBatchRunner(
 					reporter?.batchSummary({ scenes: results, restoreSucceeded });
 					if (!restored.ok)
 						reporter?.warn(
-							`Project restoration failed: ${restored.error.message}`,
+							manualRecoveryGuidance(plan.session, restored.error),
 						);
 				}
 			}

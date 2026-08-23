@@ -17,6 +17,7 @@ import {
 	canonicalProjectPath,
 	resolveSessionDirectory,
 } from "../shared/paths.js";
+import { rollbackPromotionJournals } from "../shared/promotion-journal.js";
 import { err, ok, type Result } from "../shared/types.js";
 import { type AddedPackage, patchManifest } from "./manifest-patch.js";
 
@@ -267,6 +268,17 @@ export async function restoreBackupSession(
 	session: BackupSession,
 ): Promise<Result<void, GuardError>> {
 	try {
+		// 出力公開の途中で落ちた場合、退避された旧動画がジャーナルに記録されている。
+		// セッションディレクトリを消す前に元へ戻す
+		const unresolved = await rollbackPromotionJournals(
+			session.sessionDirectory,
+		);
+		if (unresolved.length > 0)
+			return err({
+				kind: "restore-failed",
+				message: `出力の巻き戻しに失敗しました。手動で戻してください: ${unresolved.join(", ")}`,
+				manualRecoveryHint: `退避ファイルを元の名前へ戻してください: ${unresolved.join(", ")}`,
+			});
 		for (const file of session.files) {
 			const target = path.join(session.projectPath, file.relativePath);
 			const backup = path.join(session.sessionDirectory, file.backupFileName);

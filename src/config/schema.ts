@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+	invalidWindowsFileNameReason,
 	outputWildcardListText,
 	unknownOutputWildcards,
 } from "../shared/output-wildcards.js";
@@ -35,11 +36,16 @@ const outputSchema = z
 			// manifest を一時変更した後になるため、check では検出できない)
 			.superRefine((value, context) => {
 				const unknown = unknownOutputWildcards(value);
-				if (unknown.length === 0) return;
-				context.addIssue({
-					code: "custom",
-					message: `unknown wildcard <${unknown[0]}>; supported wildcards: ${outputWildcardListText()}`,
-				});
+				if (unknown.length > 0) {
+					context.addIssue({
+						code: "custom",
+						message: `unknown wildcard <${unknown[0]}>; supported wildcards: ${outputWildcardListText()}`,
+					});
+					return;
+				}
+				// Windows で作成できない名前も Editor 起動前に弾く
+				const invalid = invalidWindowsFileNameReason(value);
+				if (invalid) context.addIssue({ code: "custom", message: invalid });
 			}),
 	})
 	.strict();
