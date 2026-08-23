@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import {
 	access,
 	copyFile,
+	link,
 	mkdir,
 	readdir,
 	readFile,
@@ -123,9 +124,10 @@ function sessionDirectoryName(projectPath: string, now: Date): string {
 
 /**
  * findActiveSessions → beginBackupSession のチェック→作成区間を直列化する
- * 排他ロック。`wx` フラグの排他作成はアトミックで、同時実行の双方がチェックを
- * 通過して active session を二重に作る TOCTOU を防ぐ。死亡プロセスの残した
- * ロックは奪取する。
+ * 排他ロック。完全な内容を書いた一時ファイルを link(2) でアトミックに公開する
+ * (link は EEXIST で失敗する排他作成)ため、公開されたロックの内容は常に完全で、
+ * 「読めないロック = 書き込み途中」という誤認による生存ロックの奪取は起きない。
+ * 死亡プロセスの残したロックのみ奪取する。
  */
 async function acquireBeginLock(
 	sessionRoot: string,
@@ -137,10 +139,10 @@ async function acquireBeginLock(
 		`${projectHashOf(projectPath)}.begin.lock`,
 	);
 	for (let attempt = 0; attempt < 2; attempt++) {
+		const temporaryPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
 		try {
-			await writeFile(lockPath, JSON.stringify({ pid: process.pid }), {
-				flag: "wx",
-			});
+			await writeFile(temporaryPath, JSON.stringify({ pid: process.pid }));
+			await link(temporaryPath, lockPath);
 			return ok(lockPath);
 		} catch (cause) {
 			if ((cause as NodeJS.ErrnoException).code !== "EEXIST")
@@ -156,7 +158,8 @@ async function acquireBeginLock(
 				};
 				lockOwnerPid = typeof parsed.pid === "number" ? parsed.pid : undefined;
 			} catch {
-				// 読めないロックは書き込み途中か残骸。次の分岐で奪取を試みる
+				// link 公開により部分書き込みはあり得ない。読めない/消えたロックは
+				// 解放直後か真の残骸であり、次の周回で取得を試みる
 			}
 			if (lockOwnerPid !== undefined && isAlive(lockOwnerPid))
 				return failure(
@@ -164,12 +167,32 @@ async function acquireBeginLock(
 					"別の実行がこのプロジェクトのセッションを開始中です。同時実行はできません。",
 				);
 			await rm(lockPath, { force: true });
+		} finally {
+			await rm(temporaryPath, { force: true });
 		}
 	}
 	return failure(
 		"io-error",
 		"セッション開始ロックを獲得できませんでした。再実行してください。",
 	);
+}
+
+/**
+ * 自分が所有するロックのみ解放する。所有者死亡と誤認して奪取された後に、
+ * 新所有者のロックを消してしまわないための所有権確認。自プロセス生存中に
+ * 奪取が起きるのは誤認経路のみで、link 公開によりその経路は閉じているが、
+ * 解放側でも防衛する。
+ */
+async function releaseBeginLock(lockPath: string): Promise<void> {
+	try {
+		const parsed = JSON.parse(await readFile(lockPath, "utf8")) as {
+			pid?: number;
+		};
+		if (parsed.pid !== process.pid) return;
+	} catch {
+		return;
+	}
+	await rm(lockPath, { force: true });
 }
 export async function beginBackupSession(
 	projectPath: string,
@@ -301,7 +324,7 @@ export async function beginProjectSession(
 			);
 		}
 	} finally {
-		await rm(lock.value, { force: true });
+		await releaseBeginLock(lock.value);
 	}
 }
 export const beginSession = beginProjectSession;

@@ -184,5 +184,9 @@ describe("project recovery", () => {
 			isProcessAlive: () => false,
 		});
 		expect(stolen.ok).toBe(true);
+		// 奪取したロックは自分の所有として作り直され、完了時に解放されている
+		await expect(
+			readFile(path.join(sessionRoot, `${hash}.begin.lock`)),
+		).rejects.toThrow();
 	});
 });
