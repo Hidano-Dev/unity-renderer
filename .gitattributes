@@ -1,0 +1,16 @@
+# Windows ランナーの既定 (core.autocrlf=true) では checkout 時に LF → CRLF へ
+# 変換され、biome の format チェックが全ファイルで落ちる。プラットフォームに
+# かかわらず作業ツリーを LF に固定する。
+* text=auto eol=lf
+
+# 明示的なバイナリ (誤判定による改行変換を防ぐ)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp4 binary
+*.mov binary
+*.exe binary
+*.dll binary
+*.pdf binary

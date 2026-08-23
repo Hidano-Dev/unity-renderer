@@ -16,3 +16,14 @@ Desktop.ini
 # Logs / temp
 *.log
 *.tmp
+node_modules
+
+# Build and test artifacts
+dist/
+*.exe
+coverage/
+.artgraph/trace/
+*.jsonl
+
+# Temporary E2E project (created ad hoc during manual scenarios)
+.tmp-e2e-run*/

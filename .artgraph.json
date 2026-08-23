@@ -1,0 +1,23 @@
+{
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "!**/node_modules/**"
+  ],
+  "specDirs": [
+    "docs"
+  ],
+  "testPatterns": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.test.tsx",
+    "**/*.spec.tsx",
+    "!**/node_modules/**"
+  ],
+  "lockFile": ".trace.lock",
+  "mode": "symbol",
+  "packageManager": "pnpm",
+  "agents": [
+    "claude"
+  ]
+}

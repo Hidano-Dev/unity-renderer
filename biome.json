@@ -1,0 +1,23 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
+	"files": {
+		"includes": [
+			"package.json",
+			"tsconfig.json",
+			"biome.json",
+			"vitest.config.ts",
+			"src/**/*.ts",
+			"tests/**/*.ts"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"linter": {
+		"enabled": true
+	},
+	"assist": {
+		"enabled": true
+	}
+}

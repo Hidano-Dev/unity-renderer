@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm exec artgraph check --gate --diff"
+          }
+        ]
+      }
+    ]
+  }
+}
