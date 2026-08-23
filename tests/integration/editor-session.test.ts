@@ -19,6 +19,8 @@ describe("editor-session integration", () => {
 		let requests = 0;
 		let server: Server | undefined;
 		const session = createEditorSession({
+			// マシン全体のポートロックはテスト対象外(テスト間の相互干渉を避ける)
+			portLockPath: null,
 			spawn: () => {
 				server = createServer((request, response) => {
 					if (request.url === "/api/editor_status") {
@@ -74,6 +76,8 @@ describe("editor-session integration", () => {
 	it("kills the fake Editor when connection never becomes available", async () => {
 		const killed: number[] = [];
 		const session = createEditorSession({
+			// マシン全体のポートロックはテスト対象外(テスト間の相互干渉を避ける)
+			portLockPath: null,
 			spawn: () => ({ pid: 5678 }),
 			isPortInUse: async () => false,
 			isReachable: async () => false,

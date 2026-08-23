@@ -1,12 +1,28 @@
 import { execFile, spawn as spawnProcess } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { checkProjectLock } from "../project-guard/lock.js";
+import {
+	acquireExclusiveLock,
+	releaseExclusiveLock,
+} from "../shared/exclusive-lock.js";
+import { resolveToolDirectory } from "../shared/paths.js";
 import { err, ok, type Result } from "../shared/types.js";
 import type { EditorInstall } from "../unity-env/editors.js";
 
 const execFileAsync = promisify(execFile);
 const PIPELINE_PORT = 7800;
 const PIPELINE_HOST = "127.0.0.1";
+
+/**
+ * ポート 7800 は固定・共有資源のため、「占有チェック → 接続確立 → Editor 終了」
+ * までをマシン全体で直列化する。これが無いと、別プロジェクトの render が 2 つ
+ * 同時にチェックを通過し、先に listen した 1 つの Editor を双方が自分の接続先と
+ * 受理してしまう(同じ PID を追跡し、片方の終了処理がもう片方の Editor を kill
+ * する)。
+ */
+const PORT_LOCK_FILE = "pipeline-port-7800.lock";
 
 export interface SessionError {
 	readonly kind: "launch-failed" | "connect-timeout" | "port-conflict";
@@ -35,6 +51,8 @@ export interface SessionDependencies {
 	readonly resolvePidByPort?: (port: number) => Promise<number | undefined>;
 	/** プロジェクトを開いている Editor が生存しているか(Temp/UnityLockfile の所有)。 */
 	readonly isProjectLocked?: (projectPath: string) => Promise<boolean>;
+	/** ポート 7800 の占有をマシン全体で直列化するロック。テストで無効化できる。 */
+	readonly portLockPath?: string | null;
 }
 
 export interface EditorSession {
@@ -134,6 +152,32 @@ export function createEditorSession(
 	const isProjectLocked =
 		dependencies.isProjectLocked ??
 		(async (projectPath: string) => !(await checkProjectLock(projectPath)).ok);
+	const resolvePortLockPath = (): string | undefined => {
+		if (dependencies.portLockPath === null) return undefined;
+		if (dependencies.portLockPath !== undefined)
+			return dependencies.portLockPath;
+		const toolDirectory = resolveToolDirectory();
+		return toolDirectory.ok
+			? join(toolDirectory.value, PORT_LOCK_FILE)
+			: undefined;
+	};
+	const ensureLockDirectory = async (lockPath: string): Promise<boolean> => {
+		// 初回実行ではツールディレクトリが未作成で、ロックの一時ファイル書き込みが
+		// ENOENT になる
+		try {
+			await mkdir(dirname(lockPath), { recursive: true });
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	let heldPortLock: string | undefined;
+	const releasePortLock = async (): Promise<void> => {
+		if (!heldPortLock) return;
+		const lockPath = heldPortLock;
+		heldPortLock = undefined;
+		await releaseExclusiveLock(lockPath).catch(() => undefined);
+	};
 
 	const kill = async (): Promise<void> => {
 		if (killPromise) return killPromise;
@@ -159,6 +203,7 @@ export function createEditorSession(
 			}
 			pid = undefined;
 			currentState = "terminated";
+			await releasePortLock();
 		})();
 		return killPromise;
 	};
@@ -169,8 +214,26 @@ export function createEditorSession(
 		},
 		async start(editor, projectPath, timeoutSec) {
 			killPromise = undefined;
+			// 占有チェックから接続確立までを直列化する。ロックを取らないと、別
+			// プロジェクトの render と同時にチェックを通過し、同じ Editor を双方が
+			// 自分の接続先として受理してしまう
+			const portLockPath = resolvePortLockPath();
+			if (portLockPath && (await ensureLockDirectory(portLockPath))) {
+				const locked = await acquireExclusiveLock(portLockPath, {
+					heldMessage:
+						"別の unity-render 実行が Unity Editor を起動中です (ポート 7800 は共有資源のため同時実行できません)。",
+					staleMessage:
+						"直前の実行が残したポートロックを検出しました。30 秒ほど待って再実行してください。",
+				});
+				if (!locked.ok) {
+					currentState = "terminated";
+					return err({ kind: "port-conflict", message: locked.error.message });
+				}
+				heldPortLock = locked.value;
+			}
 			if (await isPortInUse(PIPELINE_PORT)) {
 				currentState = "terminated";
+				await releasePortLock();
 				return err({
 					kind: "port-conflict",
 					message:
@@ -196,6 +259,7 @@ export function createEditorSession(
 				pid = child.pid;
 			} catch (cause) {
 				currentState = "terminated";
+				await releasePortLock();
 				return err({
 					kind: "launch-failed",
 					message: `Unity Editor の起動に失敗しました: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -253,6 +317,7 @@ export function createEditorSession(
 		async quit(timeoutSec) {
 			if (currentState === "terminated" || pid === undefined) {
 				currentState = "terminated";
+				await releasePortLock();
 				return;
 			}
 
@@ -271,6 +336,8 @@ export function createEditorSession(
 				if (!(await isProcessAlive(processId))) {
 					pid = undefined;
 					currentState = "terminated";
+					// Editor が終了して初めてポートが空く。ここで初めて解放する
+					await releasePortLock();
 					return;
 				}
 				await sleep(

@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import { resolveRecordingTimeoutSec } from "../config/load.js";
-import type { OutputFormat, RenderConfig } from "../config/schema.js";
+import {
+	MAX_RECORDED_FRAMES,
+	type OutputFormat,
+	type RenderConfig,
+} from "../config/schema.js";
 import {
 	compilePayload,
 	type PayloadCompiler,
@@ -239,6 +243,15 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					throw Object.assign(new Error("Timeline duration is unavailable"), {
 						failureReason: "scene-open-failed" as const,
 					});
+				// range 未指定時は Timeline 全長が outPoint になるため、フレーム数の
+				// 上限検証は preflight では効かない。ここでも C# 側 (Int32) の範囲を守る
+				if ((outPoint - inPoint) * plan.config.frameRate > MAX_RECORDED_FRAMES)
+					throw Object.assign(
+						new Error(
+							`Recorded frame count exceeds ${MAX_RECORDED_FRAMES}; narrow the range or lower the frame rate`,
+						),
+						{ failureReason: "recorder-setup-failed" as const },
+					);
 
 				outputs = await (dependencies.planOutputs ?? planOutputs)({
 					directory: plan.config.output.directory,

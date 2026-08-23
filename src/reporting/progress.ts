@@ -19,7 +19,8 @@ export interface BatchResult {
 }
 
 export interface ProgressReporter {
-	sceneStarted(sceneName: string, index: number, total: number): void;
+	/** position は 1 始まりの表示位置。 */
+	sceneStarted(sceneName: string, position: number, total: number): void;
 	sceneFinished(result: SceneResult): void;
 	batchSummary(result: BatchResult): void;
 	warn(message: string): void;
@@ -67,8 +68,8 @@ export function createProgressReporter(
 	const emit = (message: string): void => write(`${message}\n`);
 
 	return {
-		sceneStarted: (sceneName, index, total) =>
-			emit(`Scene ${index}/${total}: ${sceneName} を実行中`),
+		sceneStarted: (sceneName, position, total) =>
+			emit(`Scene ${position}/${total}: ${sceneName} を実行中`),
 		sceneFinished: (result) => {
 			emit(
 				`${result.sceneName}: ${result.outcome === "success" ? "成功" : "失敗"} (${result.durationSec.toFixed(2)}s)`,

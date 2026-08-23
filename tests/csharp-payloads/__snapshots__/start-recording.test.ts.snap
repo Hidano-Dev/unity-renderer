@@ -105,7 +105,9 @@ var controllerSettings = UnityEngine.ScriptableObject.CreateInstance<UnityEditor
 controllerSettings.hideFlags = UnityEngine.HideFlags.DontSave;
 controllerSettings.FrameRate = (float)frameRate;
 controllerSettings.CapFrameRate = true;
-var totalFrames = (int)System.Math.Round((outPoint - inPoint) * frameRate);
+// 上限は CLI 側の preflight と scene-job で検証済み。ここでは checked 変換で
+// 万一の溢れを黙って 1 フレーム扱いにせず、明示的に失敗させる
+var totalFrames = checked((int)System.Math.Round((outPoint - inPoint) * frameRate));
 if (totalFrames < 1)
     totalFrames = 1;
 controllerSettings.SetRecordModeToFrameInterval(0, totalFrames - 1);

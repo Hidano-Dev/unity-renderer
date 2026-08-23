@@ -71,7 +71,9 @@ export async function rollbackPromotionJournal(
 				unresolved.push(`${backup} → ${target}`);
 		}
 	}
-	await rm(journalPath, { force: true });
+	// 戻せなかった退避物があるうちはジャーナルを残す。消してしまうと次回起動が
+	// 退避先を辿れず、旧動画が UUID 名のまま孤立する
+	if (unresolved.length === 0) await rm(journalPath, { force: true });
 	return unresolved;
 }
 

@@ -17,6 +17,8 @@ const positiveInteger = z.number().int().positive();
  * テクスチャ確保失敗ではなく、preflight で報告するために設ける。
  */
 const MAX_RESOLUTION_PIXELS = 16_384;
+/** C# 側 (Int32) が扱える録画フレーム数の上限。 */
+export const MAX_RECORDED_FRAMES = 2_147_483_647;
 const resolutionAxis = positiveInteger.max(
 	MAX_RESOLUTION_PIXELS,
 	`must not exceed ${MAX_RESOLUTION_PIXELS} pixels (Recorder and GPU limit)`,
@@ -106,7 +108,20 @@ export const renderConfigSchema = z
 		debug: z.boolean().optional(),
 		timeouts: timeoutsSchema.optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((config, context) => {
+		// 録画フレーム数は C# 側で Int32 に載る。range 指定時は preflight で検証し、
+		// Editor 起動後の変換失敗や 1 フレームだけの誤出力を防ぐ
+		if (!config.range) return;
+		const frames =
+			(config.range.outPoint - config.range.inPoint) * config.frameRate;
+		if (frames > MAX_RECORDED_FRAMES)
+			context.addIssue({
+				code: "custom",
+				path: ["range", "outPoint"],
+				message: `recorded frame count ((outPoint - inPoint) * frameRate) must not exceed ${MAX_RECORDED_FRAMES}`,
+			});
+	});
 
 export type RenderConfig = z.infer<typeof renderConfigSchema>;
 export type OutputFormat = RenderConfig["formats"][number];

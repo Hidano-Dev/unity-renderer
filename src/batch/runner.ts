@@ -132,7 +132,11 @@ export function createBatchRunner(
 
 			try {
 				for (const [index, scene] of plan.scenes.entries()) {
-					reporter?.sceneStarted(scene.sceneName, index, plan.scenes.length);
+					reporter?.sceneStarted(
+						scene.sceneName,
+						index + 1,
+						plan.scenes.length,
+					);
 					const pipeline = createPipeline(
 						plan.config.projectPath,
 						plan.session.sessionDirectory,

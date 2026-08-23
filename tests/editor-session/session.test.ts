@@ -20,6 +20,8 @@ function dependencies(overrides: Partial<SessionDependencies> = {}) {
 		sleep: vi.fn(async () => undefined),
 		isProjectLocked: vi.fn(async () => false),
 		resolvePidByPort: vi.fn(async () => undefined),
+		// 既定ではマシン全体のポートロックを使わない(テスト間の相互干渉を避ける)
+		portLockPath: null,
 		...overrides,
 	};
 }
@@ -44,6 +46,31 @@ describe("EditorSession", () => {
 			{ windowsHide: true },
 		);
 		expect(session.state).toBe("connected");
+	});
+
+	it("serializes the port acquisition across concurrent renders", async () => {
+		const { mkdtemp } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const portLockPath = join(
+			await mkdtemp(join(tmpdir(), "urc-port-lock-")),
+			"pipeline-port-7800.lock",
+		);
+		const first = createEditorSession(dependencies({ portLockPath }));
+		const second = createEditorSession(dependencies({ portLockPath }));
+
+		expect((await first.start(editor, "C:\\projects\\a", 2)).ok).toBe(true);
+		// 別プロジェクトの render は Editor を起動せず port-conflict で止まる
+		const blocked = await second.start(editor, "C:\\projects\\b", 2);
+		expect(blocked).toEqual({
+			ok: false,
+			error: expect.objectContaining({ kind: "port-conflict" }),
+		});
+
+		// 最初の Editor が終了するとロックは解放される
+		await first.kill();
+		expect((await second.start(editor, "C:\\projects\\b", 2)).ok).toBe(true);
+		await second.kill();
 	});
 
 	it("fails before launch when port 7800 is already occupied", async () => {
