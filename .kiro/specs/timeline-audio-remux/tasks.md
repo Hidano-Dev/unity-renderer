@@ -10,7 +10,7 @@
 > **トレース規約**: 本ファイルの `_Requirements:_` は requirements.md の数値 ID `N.M` を用いる。コード・テスト内の trace タグ（`@impl` / spec タグ）では接頭辞付きの `TAR-N.M`（例: `TAR-7.2`）を用いる（design Traceability 節）。
 
 - [ ] 1. Timeline 固有の検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
-- [ ] 1.1 スパイク計画文書と検証用 Timeline 構成を準備する
+- [x] 1.1 スパイク計画文書と検証用 Timeline 構成を準備する
   - `spike/timeline-audio/README.md` に検証項目 Q-1〜Q-11 の全一覧・各項目の確認内容・成功基準・失敗基準を design から転記・具体化して記録する
   - core スパイク用の実 Unity 6 テストプロジェクトに、検証に必要な Timeline 構成（2 段以上のネスト・GroupTrack 配下の AudioTrack・変速クリップ・ループクリップ・ミュートトラック・ControlClip timeScale・参照切れ ControlClip・複数音源の重なり）を追加し、所在と前提条件を文書に記録する
   - 前提: core の eval 送信経路（core P-1）が成立していること。未成立の場合は本タスクを開始しない
