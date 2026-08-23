@@ -18,7 +18,7 @@
   - _Requirements: 12.1, 12.2_
   - Files: spike/timeline-audio/README.md
 
-- [ ] 1.2 抽出成立性（Q-1〜Q-6）を実測する
+- [x] 1.2 抽出成立性（Q-1〜Q-6）を実測する
   - eval 実行 C# からの全階層 AudioTrack 列挙（多段ネストの ControlPlayableAsset ExposedReference 解決・GroupTrack 配下・参照切れ時の挙動）を実測する（Q-1）
   - TimelineClip / AudioPlayableAsset の属性一式（start / duration / clipIn / timeScale / clip / loop）の実値と Editor UI 表示の一致、クリップ長 > 音源長時のループ実挙動を確認する（Q-2）
   - クリップ音量・トラック音量・階層ミュートの取得経路（公開 API の有無、`SerializedObject` fallback の成立性）を確定する（Q-3 / Q-4）
@@ -28,7 +28,7 @@
   - _Requirements: 12.1, 12.2_
   - Files: spike/timeline-audio/README.md
 
-- [ ] 1.3 ffmpeg 側の暫定決定（Q-7〜Q-9）を実測し確定する
+- [x] 1.3 ffmpeg 側の暫定決定（Q-7〜Q-9）を実測し確定する
   - 変速再生（クリップ速度 2.0 / 0.5・ControlClip timeScale）時の Unity Editor 実再生音のピッチ変動有無を実測し、`pitchMode` 既定値（resample / preserve-pitch）を確定する（Q-7）
   - BtbN FFmpeg-Builds の具体タグ・URL・SHA-256 を確定し、同ビルドでの必要フィルタ（amix / adelay サンプル指定 / atrim / asetrate / atempo / aresample / aformat / apad / volume）と native AAC / pcm_s24le の動作、LICENSE.txt 同梱内容とライセンス義務を確認する（Q-8）
   - 実 Recorder 出力の MP4 / MOV(ProRes) への `-c:v copy` + コーデックマトリクスでの mux 成立、ストリーム長差の実測（7.4 の許容誤差検証）、mux 所要時間（タイムアウト式の係数調整）を確認する（Q-9）
@@ -36,7 +36,7 @@
   - _Requirements: 12.1, 12.2_
   - Files: spike/timeline-audio/README.md
 
-- [ ] 1.4 時間正規化とミックス同等性（Q-10 / Q-11）を実測し design 確定ゲートを検証する
+- [x] 1.4 時間正規化とミックス同等性（Q-10 / Q-11）を実測し design 確定ゲートを検証する
   - ネスト 2 段 + timeScale 0.5/2.0 + ControlClip clipIn ありの構成で、実再生の発音タイミングと時間正規化ステップ 1–2 の算出値の一致、祖先可視窓クランプの実挙動を確認する（Q-10）
   - Unity Editor 上で複数音源（音量差・重なりあり）を同時再生した基準波形・ピーク値・クリッピング挙動を採取し、`amix=normalize=0` の ffmpeg 出力波形と比較して同等性を実測する。一致しない場合はゲイン計算またはミックス方式の再決定案を記録する（Q-11。design 確定の NO-GO ゲート）
   - 完了条件: Q-10 / Q-11 の実測ログ（波形・数値比較）と同等性の成否判定が `spike/timeline-audio/README.md` に記録されている

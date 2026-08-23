@@ -131,8 +131,8 @@ unity-render-core のスタック（TypeScript 5.x strict / Bun / pnpm / vitest 
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| 音声処理 | ffmpeg（BtbN FFmpeg-Builds `win64-lgpl` 静的ビルド、ピン止めタグ） | ブレンド・変速・ループ・mux | 同梱せず初回自動 DL + SHA-256 検証（D-3/D-4）。LGPL ビルド選定で必要コーデック（native AAC / PCM）とフィルタ（amix / adelay / atrim / asetrate / atempo / aresample / volume / aformat / apad）を充足しつつライセンスリスクを最小化。具体タグ・ハッシュはスパイク Q-8 で確定 |
-| C# 実行 | `HookContext.evalCSharp`（core 提供） | Editor 内での抽出のみ | 抽出 C# の JSON 出力は `UnityEngine.JsonUtility` + `[Serializable]` DTO（double フィールド）を第一候補とする（Newtonsoft の存在に依存しない。Q-6 で確定） |
+| 音声処理 | ffmpeg（BtbN FFmpeg-Builds `win64-lgpl` 静的ビルド、ピン止めタグ） | ブレンド・変速・ループ・mux | 同梱せず初回自動 DL + SHA-256 検証（D-3/D-4）。LGPL ビルド選定で必要コーデック（native AAC / PCM）とフィルタ（amix / adelay / atrim / asetrate / atempo / aresample / volume / aformat / apad）を充足しつつライセンスリスクを最小化。具体タグ・SHA-256 は Q-8 実測で確定済み（LGPL v3 ビルド） |
+| C# 実行 | `HookContext.evalCSharp`（core 提供） | Editor 内での抽出のみ | 抽出 C# の JSON 出力は **`System.Text.StringBuilder` による手書き JSON ライタ**（double は `ToString("R", InvariantCulture)`）。`JsonUtility` は eval ペイロードでは**使用不可**（型宣言ができず、入れ子カスタム型が直列化から落ちる。Q-6 実測） |
 | ダウンロード | Bun/Node 組込 fetch | ffmpeg zip 取得 | プロキシは `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` 環境変数準拠。Windows システムプロキシの自動検出は初期リリース非対応（エラーメッセージで環境変数設定を案内） |
 | zip 展開 | 依存最小の zip 展開（実装時に `fflate` 等の軽量ライブラリを選定） | ffmpeg zip の展開 | bun compile 互換・純 JS であることを選定条件とする |
 
@@ -349,7 +349,7 @@ class AudioRemuxHookError extends Error {
 
 - Integration: core の `SceneFailureReason: "hook-failed"` と `SceneResult.outputs`（映像パスは記録済み）の組で「映像成功・音声失敗」が表現される。core の reporting 表示文言の調整が必要な場合は core 側の軽微変更として tasks で扱う
 - Validation: フェーズごとの経過を `ctx.logger.debug` に記録し、失敗時にどのフェーズで停止したかを特定可能にする
-- Risks: フック実行時間（長尺映像の mux）が core 側の Scene 処理時間に加算される。mux タイムアウトは `ceil((outPoint − inPoint) × 2) + 120` 秒/出力とする（**スパイク完了まで暫定値**。Q-9 の実測結果を反映するまで timeout 式を実装契約として固定しない）
+- Risks: フック実行時間（長尺映像の mux）が core 側の Scene 処理時間に加算される。mux タイムアウトは `ceil((outPoint − inPoint) × 2) + 120` 秒/出力とする（**Q-9 実測で確定**。21 秒の映像に対する実 mux 所要は MP4 0.19 秒 / MOV 0.03 秒（約 0.01 倍）で、本式は十分に保守的なためそのまま採用する）
 
 #### extract
 
@@ -364,10 +364,10 @@ class AudioRemuxHookError extends Error {
 - C# 側の責務（Editor 内・読み取り専用）:
   - 書き出し対象 PlayableDirector のルート TimelineAsset から AudioTrack を列挙（1.1）
   - ControlTrack のクリップ（ControlPlayableAsset）の `sourceGameObject` を director の ExposedReference 解決で辿り、子 PlayableDirector の TimelineAsset を再帰走査（多段ネスト対応。1.2）。解決不能（参照切れ・Timeline 以外）はクリップ単位でスキップし warning 記録（1.4）
-  - 各オーディオクリップの属性抽出: `TimelineClip.start / duration / clipIn / timeScale`（クリップ再生速度）、`AudioPlayableAsset.clip / loop`、クリップ音量、`TrackAsset.muted`、AudioTrack のトラック音量（2.1。具体 API はスパイク Q-2〜Q-4 で確定。API マッピング表参照）
+  - 各オーディオクリップの属性抽出: `TimelineClip.start / duration / clipIn / timeScale`（クリップ再生速度）、`AudioPlayableAsset.clip / loop`、クリップ音量、`TrackAsset.muted`、AudioTrack のトラック音量（2.1。具体 API は Q-2〜Q-4 実測で確定。API マッピング表参照）
   - 祖先 ControlClip の配置時刻・clipIn・timeScale を累積し、ルート Timeline 基準の `rootStartSec` / `rootEndSec`（祖先可視窓クランプ済み）と `effectiveSpeed` へ換算（2.3。数式は planner 節の「時間正規化」ステップ 1–2）
   - `AssetDatabase.GetAssetPath(audioClip)` → プロジェクトルートと結合して絶対パス化（2.2）。サブアセット等ファイル実体を持たない参照は error 記録（2.2）
-  - JSON を `<出力先>.tmp` へ書き込み後 `File.Move`（rename）で atomic に確定（8.2）。eval 応答文字列に成否と要約を返す
+  - JSON を `<出力先>.tmp` へ書き込み後、**宛先が既存なら `File.Replace(temp, dst, null)`、無ければ `File.Move`** で atomic に確定（8.2）。Unity の C# プロファイルに `File.Move(src, dst, overwrite)` は無く、delete + move には隙間があるため（core の既存ペイロードと同じ実装）。eval 応答文字列に成否と要約を返す
 - TS 側は「eval 応答成功 + JSON ファイル存在」を書き込み完了判定とし、以降の検証は metadata コンポーネントに委譲する（8.2）
 - Scene 内 AudioSource・AudioTrack 以外の発音は走査対象に含めない（1.3。走査起点を TimelineAsset のトラック列挙に限定することで構造的に保証）
 - 抽出 eval のタイムアウト: 120 秒（大規模 Timeline を考慮した固定値。スパイク実測で調整）
@@ -395,32 +395,35 @@ interface ExtractService {
 - Postconditions: 成功時 `metadataFilePath` に完全な JSON が存在する（スキーマ適合は未保証。metadata が検証する）
 - Invariants: C# ペイロードは読み取り・抽出・sessionDir への JSON 書き込みのみを行う（8.4。sessionDir への書き込みはプロジェクト外のため非介入原則に抵触しない）
 
-**Unity Timeline API マッピング表（暫定 — スパイク Q-1〜Q-5 で確定）**:
+**Unity Timeline API マッピング表（確定 — スパイク Q-1〜Q-5 実測済み / Unity 6000.0.36f1 + com.unity.timeline 1.7.7）**:
 
-| メタデータフィールド | Unity API（第一候補） | フォールバック / 備考 |
+| メタデータフィールド | 採用 API | 備考 |
 |---|---|---|
-| AudioTrack 列挙 | `TimelineAsset.GetOutputTracks()` から `AudioTrack` を型フィルタ（サブトラック含む） | `GetRootTracks()` + 再帰。GroupTrack 配下も列挙対象 |
+| AudioTrack 列挙 | `TimelineAsset.GetOutputTracks()` から `AudioTrack` を型フィルタ | **GroupTrack 配下も平坦化して返る**ため自前の再帰は不要（Q-1 実測） |
 | クリップ列挙 | `TrackAsset.GetClips()` → `TimelineClip` | — |
 | 音源 AudioClip | `TimelineClip.asset as AudioPlayableAsset` → `.clip` | null（未割当）は warning でスキップ |
-| 元ファイルパス | `AssetDatabase.GetAssetPath(clip)` → プロジェクトルートで絶対化 | `AssetDatabase.IsSubAsset` 真、または拡張子がファイル実体を示さない場合は error（2.2） |
+| 元ファイルパス | `AssetDatabase.GetAssetPath(clip)` → `System.IO.Path.GetFullPath` | **`Packages/...` も正しく解決される**（registry package は `Library/PackageCache/...` へ Editor が remap）。Packages 専用の解決経路は**不要**（Q-5 実測） |
+| ファイル実体なしの判定 | `AssetDatabase.IsSubAsset(clip)` が真、または拡張子が音声形式でない | error として記録（2.2）。サブアセット AudioClip は `assetPath` が `.asset` を指す（Q-5 実測） |
 | rootStart / duration | `TimelineClip.start` / `.duration`（ルート換算前のローカル値） | — |
 | clipIn | `TimelineClip.clipIn` | — |
 | クリップ再生速度 | `TimelineClip.timeScale` | — |
-| ループ | `AudioPlayableAsset.loop` | 実挙動（クリップ長 > 音源長時の Editor 動作）を Q-2 で確認 |
-| 音源長 | `AudioClip.length` | — |
-| クリップ音量 | `AudioPlayableAsset` の clip properties（volume） | 公開 API が無い場合は `SerializedObject` で `m_ClipProperties.volume` を読む（Q-3） |
-| トラック音量 | AudioTrack のトラックプロパティ（volume） | 公開 API が無い場合は `SerializedObject` で `m_TrackProperties.volume` を読む（Q-4） |
-| トラックミュート | `TrackAsset.muted`（親グループのミュートは `mutedInHierarchy` 相当を考慮） | Q-4 で階層ミュートの伝搬を確認 |
-| 子 Timeline 解決 | `ControlPlayableAsset.sourceGameObject.Resolve(director)` → `GetComponent<PlayableDirector>()` → `.playableAsset as TimelineAsset` | 解決不能は warning でスキップ（1.4） |
+| ループ | `AudioPlayableAsset.loop` | クリップ長 > 音源長で折り返すことを実再生音で確認済み（Q-2） |
+| 音源長 | **ffprobe のデコード長を正とする** | `AudioClip.length` は **mp3 でエンコーダのパディングを含む**（2.0 s の音源が 2.0637 s）。参考値に留める（Q-5 実測） |
+| クリップ音量 | **`SerializedObject` の `m_ClipProperties.volume`** | 公開 API は**存在しない**。fallback を正式経路に昇格（Q-3 実測） |
+| トラック音量 | **`SerializedObject` の `m_TrackProperties.volume`** | 公開 API は**存在しない**。fallback を正式経路に昇格。値は `float` なので JSON には float 精度の double が出る（例 `0.20000000298023224`）。TS 側はこれを許容する（Q-4 実測） |
+| トラックミュート | **`TrackAsset.muted` + `TrackAsset.parent` を祖先方向に走査** | `mutedInHierarchy` 相当の公開 API は見当たらず、祖先手動走査を正式経路とする（Q-4 実測） |
+| 子 Timeline 解決 | `ControlPlayableAsset.sourceGameObject.Resolve(owner)` → `GetComponent<PlayableDirector>()` → `.playableAsset as TimelineAsset` | **eval コンテクストで動作する**。`owner` は各階層の PlayableDirector。解決不能時は**例外ではなく null** が返るので warning でスキップ（1.4 / Q-1 実測） |
 | ControlClip timeScale | `TimelineClip.timeScale`（ControlTrack 上のクリップ） | — |
 
-> **注記（Q-3/Q-4 確定手順）**: クリップ音量・トラック音量・階層ミュートの API 経路は、スパイク Q-3/Q-4 完了後に「採用 API（公開 API / SerializedObject fallback のいずれを正式経路とするか）・対応 Unity/Timeline パッケージのバージョン範囲・SerializedObject fallback の安定性（シリアライズ名の互換性）」を本表を更新する形で表として確定する。確定までは本表全体を暫定として扱う。
+> **バージョン範囲**: 上表は Unity 6000.0.36f1 + com.unity.timeline 1.7.7 で実測した。`m_ClipProperties.volume` / `m_TrackProperties.volume` は公開 API ではないシリアライズ名のため、Timeline パッケージのメジャー更新時は再確認が必要。読み取りは「プロパティが見つからなければ既定 1.0 + warning」でフェイルソフトに実装する。
+
+> **eval ペイロードの形式制約（Q-6 実測）**: `evalCSharp` に渡す C# は Editor 側で `static class ... { public static object Execute() { /* 渡したコード */ } }` 相当に包まれる。したがって **usings は書けず（完全修飾名を使う）、メソッド本体なので型宣言もできない**。ローカル関数は使える。この制約が下記 JSON 生成方式の決定理由。
 
 **Implementation Notes**
 
 - Integration: `injectParams` は core `csharp-payloads/compile.ts` から export される汎用関数を利用（Modified Files 参照）。eval トランスポート（file / inline-split）は core の `evalCSharp` 内部に隠蔽されており本 Spec は関知しない
 - Validation: ペイロードのスナップショットテスト（注入済み出力の固定）+ 必須 API 呼び出し列の文字列検証（core 規約踏襲）
-- Risks: クリップ/トラック音量の公開 API 有無が Unity/Timeline パッケージバージョンに依存する（スパイク Q-3/Q-4 が必須ゲート）。JsonUtility の double 精度・大規模 Timeline での eval サイズ制約は Q-6 で確認
+- Risks: クリップ/トラック音量は公開 API が無く `SerializedObject` のシリアライズ名に依存する（Q-3/Q-4 実測。Timeline メジャー更新時は再確認）。規模は問題にならないことを実測済み（150 クリップで JSON 51,976 bytes / 走査 + 直列化 4 ms / 合計 79 ms。Q-6）
 
 #### metadata
 
@@ -542,7 +545,7 @@ interface MixPlanner {
 **Implementation Notes**
 
 - Validation: 時間計算の性質テスト（ネスト 0〜3 段 × 変速 × ループ × イン/アウトの組合せ表）を単体テストの最重点とする
-- Risks: ステップ 1–2（C# 側）の式の実機一致はスパイク Q-10 で検証する（式が Unity 実挙動と異なればスキーマは変えず C# 実装を修正）
+- Risks: ステップ 1–2（C# 側）の式は Q-10 実測で構造を検証済み（ネスト時刻・実効速度の累積が一致）。ただし Unity 実再生音の絶対位置には未解明のずれがあるため、同期精度の判定は ffmpeg 出力と計画値の一致で行う（Research Needed 節の残課題を参照）
 
 #### ffmpeg/acquire
 
@@ -553,7 +556,7 @@ interface MixPlanner {
 
 **Responsibilities & Constraints**
 
-- **ピン止めマニフェスト（暫定 — スパイク Q-8 ゲート）**: BtbN FFmpeg-Builds の**特定リリースタグ**（latest ではなく `autobuild-YYYY-MM-DD-HH-MM` 形式の恒久タグ）の `ffmpeg-nX.Y-…-win64-lgpl.zip` を採用する。URL・SHA-256・ffmpeg バージョンをコード内定数 `FfmpegManifest` として保持する（5.1 / D-4）。具体タグ・ハッシュの確定はスパイク Q-8（実バイナリでの smoke + フィルタ/コーデック確認とセット）。**具体タグ・SHA-256・ffmpegVersion を含む `FfmpegManifest` の内容はスパイク完了まで暫定値として扱い、Q-8 の実測結果を反映するまで実装契約として固定しない**
+- **ピン止めマニフェスト（Q-8 実測で確定）**: BtbN FFmpeg-Builds の**恒久タグ** `autobuild-2026-08-22-12-58` の `ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1.zip` を採用する。URL・SHA-256・ffmpeg バージョンをコード内定数 `FfmpegManifest` として保持する（5.1 / D-4。確定値は下記 Service Interface の `FFMPEG_MANIFEST`）。実バイナリで smoke・必要フィルタ（`amix` `adelay` `atrim` `asetrate` `atempo` `aresample` `aformat` `apad` `volume` `aloop`）・エンコーダ（`aac` `pcm_s24le`）の動作を確認済み。ダウンロード所要は実測 8.2 秒（146 MB）
   - LGPL ビルド選定理由: 本機能が必要とするのは native AAC エンコーダ・PCM・libavfilter の標準フィルタのみで、GPL 限定コンポーネント（libx264 等）を使わない。ダウンロード方式のため再配布義務自体が発生しないが、ビルド種別としてもリスクの低い側に倒す
 - **管理ディレクトリ（決定）**: `%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\<buildId>\`（`buildId` 例: `btbn-autobuild-2026-07-31-win64-lgpl`）。sessions とは別系統で、バージョン更新時は新 `buildId` ディレクトリが並存する（旧版の自動削除はしない。5.7）
 - 取得手順（5.7 / ffmpeg 取得フロー参照）: 一時ファイルへ DL → SHA-256 検証 → `tools\ffmpeg\.staging-<random>\` へ展開 → `ffmpeg.exe -version` smoke → `<buildId>` へ atomic rename → `install-info.json` 記録。途中失敗時は staging を削除し、`<buildId>` ディレクトリの存在 = 有効化完了の不変条件を保つ
@@ -562,7 +565,9 @@ interface MixPlanner {
 - 使用バイナリは管理ディレクトリ（または manual）のみ。PATH 上の ffmpeg は参照・実行しない（5.2）。取得済みなら以降オフラインで動作する（5.3）
 - **手動配置エスケープハッチ（決定）**: `%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\ffmpeg.exe` が存在し smoke に成功する場合、ハッシュ検証なしでこれを最優先で使用する（警告ログ付き）。オフライン環境・配布元障害時の回避経路（5.6 の案内先）
 - プロキシ（5.7 の確定）: fetch の `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` 環境変数準拠。Windows システムプロキシ設定の自動追従は初期リリース非対応とし、ネットワーク失敗時のエラーメッセージで環境変数設定と手動配置の両方を案内する
-- **ライセンス記録（5.4）**: `install-info.json` に buildId・取得元 URL・SHA-256・取得日時・ライセンス種別を記録し、zip 同梱の `LICENSE.txt` を `<buildId>\` 配下にそのまま保持する。ツールのユーザードキュメントに「ffmpeg は BtbN FFmpeg-Builds（LGPL ビルド）を初回実行時にユーザー環境へダウンロードする。再配布は行わない」旨とソース入手先を明記する。選定ビルドのライセンス義務の最終確認はスパイク Q-8 のチェック項目に含める
+- **ライセンス記録（5.4）**: `install-info.json` に buildId・取得元 URL・SHA-256・取得日時・ライセンス種別を記録し、zip 同梱の `LICENSE.txt` を `<buildId>\` 配下にそのまま保持する。ツールのユーザードキュメントに「ffmpeg は BtbN FFmpeg-Builds（LGPL ビルド）を初回実行時にユーザー環境へダウンロードする。再配布は行わない」旨とソース入手先を明記する。
+- **ライセンス種別（Q-8 実測で確定）**: 採用ビルドの configuration は `--enable-version3` を含み `--enable-gpl` / `--enable-nonfree` を含まない（`--disable-libx264` / `--disable-libx265`）。同梱 `LICENSE.txt` は **LGPL v3 全文**。したがって `license.kind` は `LGPL-3.0-or-later` とする（当初の `LGPL-2.1-or-later` は誤り）。
+- **恒久タグを使う（Q-8 実測）**: BtbN の `latest` リリースは**資産が差し替わるローリングタグ**で、SHA-256 のピン止めが成立しない。マニフェストの URL には必ず日付入りの `autobuild-YYYY-MM-DD-HH-MM` タグを使う
 
 **Contracts**: Service [x] / State [x]
 
@@ -570,16 +575,31 @@ interface MixPlanner {
 
 ```typescript
 interface FfmpegManifest {
-  readonly buildId: string;                 // 例 "btbn-autobuild-2026-07-31-win64-lgpl"
-  readonly ffmpegVersion: string;           // 例 "n7.1"（スパイク Q-8 で確定）
-  readonly url: string;                     // ピン止めリリースタグの zip URL
+  readonly buildId: string;
+  readonly ffmpegVersion: string;
+  readonly url: string;                     // 恒久タグ（autobuild-*）の zip URL
   readonly sha256: string;                  // 小文字 hex 64 桁
+  readonly sizeBytes: number;               // DL 完了判定の補助
   readonly archiveBinaryRelPath: string;    // zip 内の ffmpeg.exe 相対パス
   readonly license: {
-    readonly kind: "LGPL-2.1-or-later";
+    readonly kind: "LGPL-3.0-or-later";
     readonly sourceUrl: string;             // ソースコード入手先（BtbN リポジトリ）
   };
 }
+
+// スパイク Q-8 実測で確定した値（2026-08-23）
+const FFMPEG_MANIFEST: FfmpegManifest = {
+  buildId: "ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1",
+  ffmpegVersion: "n8.1.2-44-g7c533d0f86",
+  url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-22-12-58/ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1.zip",
+  sha256: "aa5ff0d7bfc091f9a43d43f7af4a2174294edacf5cdc5fff031819a5eaa763c7",
+  sizeBytes: 146_078_688,
+  archiveBinaryRelPath: "ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1/bin/ffmpeg.exe",
+  license: {
+    kind: "LGPL-3.0-or-later",
+    sourceUrl: "https://github.com/BtbN/FFmpeg-Builds",
+  },
+};
 
 interface FfmpegAcquireError {
   readonly kind: "network" | "checksum-mismatch" | "extract-failed"
@@ -622,22 +642,33 @@ interface FfmpegProvider {
 
 **Responsibilities & Constraints**
 
-> **暫定値の扱い（スパイクゲート）**: 以下の変速フィルタ・ミックス方式・コーデックマトリクスはスパイク完了まで暫定値として扱う。Q-7〜Q-11 の実測結果を反映するまで、`pitchMode` 既定値、`normalize=0` の採否、`FfmpegManifest`、codec matrix、timeout 式を実装契約として固定しない。
+> **スパイク完了（2026-08-23）**: 変速フィルタ・ミックス方式・コーデックマトリクス・タイムアウト式は Q-7〜Q-11 の実測で確定した。以下は暫定値ではなく実装契約である。実測ログは `spike/timeline-audio/README.md`。
 
 - **filter graph 構成（クリップごと）**: 入力 `i`（ループクリップは `-stream_loop -1` を入力オプションに付与。4.6 / D-2）に対し
-  `atrim=start=<trimStart>:end=<trimEnd>` → `[speed ≠ 1 のとき変速フィルタ]` → `aformat=sample_rates=48000:channel_layouts=stereo`（モノラル音源のステレオ正規化）→ `volume=<gain>` → `adelay=<delaySamples>S:all=1` → ラベル `[a<i>]`
-- **変速フィルタ（暫定 — スパイク Q-7 ゲート）**: Unity Timeline のクリップ再生速度・ControlClip timeScale は AudioSource の pitch 変更として実装されており**ピッチが変動する**、という仮説を第一候補とし、`asetrate=48000*<v>,aresample=48000`（ピッチ変動あり）を既定とする。Q-7 の実測でピッチ非変動と判明した場合は `atempo` チェーン（0.5–2.0 範囲外は多段接続）へ切り替える。`buildFilterGraph(plan, pitchMode)` の `pitchMode: "resample" | "preserve-pitch"` で両実装を持ち、既定値のみをスパイク結果で確定する。**`pitchMode` 既定値はスパイク完了まで暫定値であり、Q-7 の実測結果を反映するまで実装契約として固定しない**
-- **ミックス（暫定 — スパイク Q-11 ゲート）**: `amix=inputs=<N>:normalize=0:duration=longest`（4.1）。`normalize=0` が Unity の加算ミックス挙動（自動音量正規化なし）と一致するというのは**実測未検証の仮説**であり、スパイク Q-11（Unity Editor 実再生波形との比較）で検証するまで暫定値として扱う。一致しない場合はゲイン計算またはミックス方式を再決定する。クリッピングは Unity 再生時と同条件で発生し得るものとして抑制処理を入れない（Q-11 の検証項目に含む）。その後 `apad=whole_dur=<outDur>` + `atrim=0:<outDur>` でストリーム長を確定 → `[mix]`
-- filter graph は Windows のコマンドライン長制限を回避するため常に `-filter_complex_script <sessionDir>\audio-mix.filter` で渡す（クリップ数非依存）
+  `atrim=start=<trimStart>:end=<trimEnd>` → `asetpts=N/SR/TB` → `[speed ≠ 1 のとき変速フィルタ]` → `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo` → `volume=<gain>` → `adelay=<delaySamples>S:all=1` → ラベル `[a<i>]`
+  - `atrim` の直後に `asetpts=N/SR/TB` を入れて時刻を 0 起点へ振り直す（これが無いと後続の `adelay` が元の PTS に加算されて配置がずれる）
+  - **`adelay=<N>S` はサンプル厳密**（実測: 12000S 指定で出力長 1.250000 s、クリック位置ちょうど +0.25 s）。4.5 の「量子化誤差 ≤ 1 サンプル」は満たされる
+- **ステレオ正規化は `aformat` を使う（Q-8 / Q-11 実測で確定）**: `aformat`（および `aresample=ochl=stereo`）のモノラル→ステレオ変換は正規化行列により **-3.01 dB** される。**Unity も同じ -3.01 dB を適用する**ことを実再生音で確認した（モノラル音源クリップの実測ピークが理論値の 1/√2 と一致）。したがって `pan=stereo|c0=c0|c1=c0`（レベル保持）を使うと ffmpeg 側が 3 dB 大きくなり不一致になる。**`pan` を使ってはならない**
+- **変速フィルタ（Q-7 実測で確定）**: **既定は `pitchMode: "resample"`**（`asetrate=<srcRate>*<v>,aresample=48000`）。Unity は変速時にリサンプリングしピッチが変動することを実再生音で確認した（440 Hz を 2.0 倍速 → 880 Hz、1000 Hz を 1.5 倍速 → 1500.4 Hz）。
+  - `asetrate` は**入力ファイルのサンプルレート**を基準に掛ける（48000 固定ではない）。44.1 kHz 音源を 2 倍速にするなら `asetrate=88200,aresample=48000`
+  - `asetrate` は全速度でサンプル厳密（実測: 0.5 / 1.5 / 2.0 倍で長さ誤差 0）
+  - **`preserve-pitch`（`atempo`）を使う場合は長さ強制が必須**: `atempo` は速度 0.5 / 1.5 / 2.0 で -0.26% / +0.12% / +0.33% の長さ誤差を出す（短尺では -2.4%）。7.4 の許容誤差（0.5 フレーム）は長尺クリップで容易に超えるため、`atempo` の後段に `atrim=end_sample=<期待サンプル数>` + `apad` を必ず付ける
+- **ミックス（Q-11 実測で確定）**: `amix=inputs=<N>:normalize=0:duration=longest`（4.1）。
+  - `normalize=0` が**純粋な加算**であることを実測（同一入力 3 本で厳密に 3 倍 = +3.52 dBFS）。`normalize=1` は `sum/N` になり絶対レベルが壊れるため**使用しない**
+  - Unity 実再生音との同等性を実測: 全トーン区間（重なり区間を含む）で**区間 RMS が 0.09〜0.11 dB 以内で一致**。ゲインモデル（クリップ音量 × トラック音量の乗算、モノラル -3.01 dB）も絶対値で一致
+  - クリッピング抑制は入れない（Unity と同条件）。中間処理が float なので mux 前にはクリップしないが、**ffmpeg のリサンプラは鋭い過渡音でオーバーシュートする**（0.5 倍速のクリック列でピーク 1.166。Unity は 0.911）。最終エンコードで 0 dBFS を超える成分は歪みうる
+  - その後 `apad` + `atrim=end_sample=<総サンプル数>` + `asetpts=N/SR/TB` でストリーム長を確定 → `[mix]`
+- **出力の総サンプル数は映像長から導出する（Q-9 実測）**: `round((outPoint - inPoint) × 48000)`。音声側の実測長に合わせるのではなく映像長基準にすることで、ストリーム長差が **0.000000 秒（0.000 フレーム）** になることを実 Recorder 出力で確認した（音声側基準にすると 0.008 秒 = 0.24 フレームの差が残った）
+- filter graph は Windows のコマンドライン長制限を回避するため常に `-filter_complex_script <sessionDir>\audio-mix.filter` で渡す（クリップ数非依存）。実測では 8 クリップで 1,280 bytes、150 クリップ換算で約 24 KB となり、コマンドライン長制限（約 8,191 文字）を超えるため**スクリプトファイル渡しは必須**
 - **mux コマンド形（6.1 / 6.3）**: `ffmpeg -y -i <video> [入力群] -filter_complex_script <script> -map 0:v:0 -map "[mix]" -c:v copy <コーデック引数> <一時出力>`。映像ストリームは常に `-c:v copy`（再エンコードなし。6.3）
-- **コーデックマトリクス（6.4 / D-6 — スパイク完了まで暫定値）**:
+- **コーデックマトリクス（6.4 / D-6 — Q-8 / Q-9 実測で確定）**:
 
 | 出力コンテナ | 音声コーデック | サンプルレート | 量子化/ビットレート | チャンネル | 追加フラグ |
 |---|---|---|---|---|---|
 | MP4 | AAC-LC（ffmpeg native `aac`） | 48000 Hz | 256 kbps | stereo | `-movflags +faststart` |
 | MOV(ProRes) | `pcm_s24le`（非圧縮 24bit。編集用途の定石） | 48000 Hz | 24bit | stereo | — |
 
-  設定項目にはしない（D-6）。中間処理は 48000 Hz / stereo / float で統一する。**本マトリクスはスパイク完了まで暫定値として扱い、Q-8（同ビルドでのコーデック動作確認）・Q-9（実 Recorder 出力での mux 成立確認）の実測結果を反映するまで実装契約として固定しない**
+  設定項目にはしない（D-6）。中間処理は 48000 Hz / stereo / float で統一する。**採用ビルドで `aac` / `pcm_s24le` の動作を確認済み**（Q-8）。**実 Recorder 出力（h264 MP4 / ProRes MOV、640×360 / 30 fps / 630 フレーム）への `-c:v copy` mux が両コンテナで成立**することを確認済み（Q-9）
 - 実行はツール管理（または manual）の ffmpeg のみを使用し（5.2）、Unity Editor プロセスに依存しない（6.5）
 - デバッグモード時: 実行コマンドライン全文と stderr 全文を `logger.debug` へ出力し、`<sessionDir>\ffmpeg-<format>.log` にも保存する（11.1）。非デバッグ時は stderr を失敗時のエラー要約（末尾抜粋）にのみ使用する（11.2）
 
@@ -646,7 +677,8 @@ interface FfmpegProvider {
 ##### Service Interface
 
 ```typescript
-type PitchMode = "resample" | "preserve-pitch"; // 既定はスパイク Q-7 で確定（暫定: resample）
+// 既定は "resample"（スパイク Q-7 実測で確定。Unity は変速時にピッチも変動する）
+type PitchMode = "resample" | "preserve-pitch";
 
 interface FilterGraph {
   readonly script: string;                  // -filter_complex_script の内容（決定的・スナップショット対象）
@@ -820,7 +852,7 @@ interface ExtractionWarning {
 3. metadata/schema: 正常系・欠落・型不正・範囲外・未知 `schemaVersion`・`errors` 非空・音源欠落の各フィクスチャ（スパイクで採取した実 JSON を含む）
 4. ffmpeg/acquire: モック fetch + フェイク zip で「DL → 検証 → 展開 → smoke → atomic 有効化」の成功経路、ハッシュ不一致・破損 zip・smoke 失敗・ロック競合/残骸・manual 優先の各経路
 5. output/finalize: 置き換え手順の全経路（成功 / 検証失敗で無音版無傷 / デバッグ時 `.noaudio` 保持 / `.audiotmp` 残骸検出）
-6. extract/payload: `extract-audio.cs` の注入済み出力スナップショット + 必須 API 列（`GetOutputTracks` 等・atomic write・JsonUtility）の文字列検証
+6. extract/payload: `extract-audio.cs` の注入済み出力スナップショット + 必須 API 列（`GetOutputTracks` 等・`File.Replace` による atomic write）の文字列検証。**`JsonUtility` を含まないこと**も検証対象に含める（Q-6 で使用不可と確定したため）
 
 ### Integration Tests（vitest + フェイク）
 
@@ -852,35 +884,49 @@ interface ExtractionWarning {
 ## Performance & Scalability
 
 - 中間処理は 48 kHz / stereo / float 固定で、クリップ数 N に対し filter graph は線形に伸びる。`-filter_complex_script` 採用によりコマンドライン長制限（Windows 32K）の影響を受けない
-- 既知の非効率: ループクリップの `-stream_loop` + filter 内 `atrim` は先頭からのデコードを伴う。非ループクリップの入力側 `-ss` 高速シーク、ループの `aloop`（サンプル単位）への切り替えは、正しさの実測（スパイク Q-9）後の将来最適化とする
-- mux は映像再エンコードなし（`-c:v copy`）のため所要時間は音声処理 + コンテナ書き換えのみ。タイムアウト既定 `ceil(outDur × 2) + 120` 秒/出力（スパイク完了まで暫定値。Q-9 の実測結果を反映するまで実装契約として固定しない）
+- 既知の非効率: ループクリップの `-stream_loop` + filter 内 `atrim` は先頭からのデコードを伴う。非ループクリップの入力側 `-ss` 高速シーク、ループの `aloop`（サンプル単位）への切り替えは、正しさの実測（Q-9 完了済み）を踏まえた将来最適化とする。`aloop=-1:size=N` + `atrim` でも `-stream_loop -1` + `atrim` と同じくサンプル厳密な長さになることは実測済み
+- mux は映像再エンコードなし（`-c:v copy`）のため所要時間は音声処理 + コンテナ書き換えのみ。タイムアウト既定 `ceil(outDur × 2) + 120` 秒/出力（Q-9 実測で確定。21 秒映像に対し実測 0.19 秒 / 0.03 秒）
 
-## Research Needed / スパイク依存の暫定決定
+## Research Needed / スパイク依存の暫定決定 — **完了（2026-08-23）**
 
-Requirement 12 の Timeline 固有検証スパイクは**実装着手前の必須ゲート**である。core のスパイク（P-1〜P-13）とは独立に、`spike/timeline-audio/README.md` へ全検証項目・成功基準・失敗基準・実測ログ・ユーザー承認状態を記録する（12.2）。
+Requirement 12 の Timeline 固有検証スパイクは**実施済み**。全実測ログ・確定値・GO 判定は `spike/timeline-audio/README.md`（12.2）。
 
-**実装ゲート（必須・NO-GO 規則）**:
+**判定: GO（条件付き）**
 
-- Q-1〜Q-6（抽出成立性）のいずれかが不成立の場合、後続タスクの実装に進まず、代替方針の再検討をユーザーに提示する（12.3。NO-GO）
-- Q-7〜Q-11 は design 確定項目（フィルタ選定・ミックス方式・マニフェスト・実測値）のゲートであり、確定結果を本設計へ反映してから該当コンポーネントの実装に着手する。特に Q-11（ミックス同等性）は **design 確定の NO-GO ゲート**とし、実測で同等性を確認（または方式を再決定して設計へ反映）するまでミックス方式を確定扱いにしない
-- 本文中の `pitchMode` 既定値・`normalize=0` の採否・`FfmpegManifest`・codec matrix・timeout 式はスパイク完了まで暫定値であり、Q-7〜Q-11 の実測結果を反映するまで実装契約として固定しない（該当各節に同旨を明記済み）
-- スパイクは core のスパイク環境（実 Unity 6 プロジェクト + eval 経路）を前提とするため、core P-1（eval 送信）成立後に実施する
+- **Q-1〜Q-6（抽出成立性）**: すべて実装可能な経路が確定。Q-3 / Q-4 / Q-6 はフォールバック経路の採用で成立。**NO-GO 条件に該当しない**
+- **Q-11（design 確定の NO-GO ゲート）**: `amix=normalize=0` の Unity との同等性を実測で確認（区間 RMS 0.09〜0.11 dB 一致）。**ゲート通過**
+- **Q-7 / Q-8 / Q-9**: 暫定値をすべて実測値で確定し、本設計の該当節へ反映済み
 
-| ID | 暫定決定 | スパイクで確認する内容 | 不成立時のフォールバック |
-|----|----------|------------------------|--------------------------|
-| Q-1 | eval C# で `GetOutputTracks()` + ControlPlayableAsset の ExposedReference 解決により全階層 AudioTrack を列挙できる | 多段ネスト（2 段以上）の走査、GroupTrack 配下、`sourceGameObject.Resolve(director)` の eval コンテクストでの動作、参照切れ時の挙動（12.1） | Scene 内 PlayableDirector 全列挙 + TimelineAsset 逆引きによる代替走査。それも不可なら NO-GO |
-| Q-2 | `TimelineClip.start/duration/clipIn/timeScale`・`AudioPlayableAsset.clip/loop` で属性一式を取得できる | 各プロパティの実値と Editor UI 表示の一致、loop の実挙動（クリップ長 > 音源長時）（12.1） | SerializedObject による直接読取。それも不可なら NO-GO |
-| Q-3 | クリップ音量は AudioPlayableAsset の clip properties から取得（公開 API 想定） | 公開 API の有無。無ければ `SerializedObject` で `m_ClipProperties.volume` を読めるか（12.1） | SerializedObject 読取を正式経路に昇格。それも不可なら音量既定 1.0 + 制約明記の再協議 |
-| Q-4 | トラック音量 = AudioTrack トラックプロパティ、ミュート = `TrackAsset.muted`（階層伝搬考慮） | track volume の取得経路、GroupTrack ミュートの子トラックへの伝搬 API（`mutedInHierarchy` 相当）（12.1） | SerializedObject 読取（`m_TrackProperties.volume`）。ミュート伝搬は祖先手動走査 |
-| Q-5 | `AssetDatabase.GetAssetPath` + プロジェクトルート結合で元ファイル絶対パスを解決できる | .wav/.mp3/.ogg での実パス、サブアセット判定（`IsSubAsset`）、Packages 内アセットのパス形式（12.1） | パッケージ内音源は `Path.GetFullPath("Packages/...")` 解決を追加。実体なしは error 維持 |
-| Q-6 | 抽出 JSON は JsonUtility + `[Serializable]` DTO（double）で生成し、temp → `File.Move` で atomic write できる | JsonUtility の double 精度・配列シリアライズ、sessionDir への書き込み権限、大規模 Timeline（100+ クリップ）での eval 実行時間とサイズ制約（12.1） | 手書き JSON ライタ（StringBuilder）へ切替。atomic write 不可なら書き込み完了マーカーファイル方式 |
-| Q-7 | 変速再生（クリップ速度・ControlClip timeScale）で Unity Editor はピッチも変動する → `asetrate` + `aresample`（`pitchMode: "resample"` 既定） | クリップ速度 2.0 / 0.5・ControlClip timeScale 変速時の Editor 実再生音のピッチ実測（4.5 / D-1） | ピッチ非変動なら `atempo` チェーン（`pitchMode: "preserve-pitch"` 既定）へ切替。両実装は設計済みのため既定値の変更のみ |
-| Q-8 | ffmpeg は BtbN FFmpeg-Builds の恒久タグ `win64-lgpl` zip をピン止め | 具体タグ・URL・SHA-256 の確定、native AAC / pcm_s24le / 必要フィルタ（amix, adelay サンプル指定, atrim, asetrate, atempo, aresample, aformat, apad, volume）の同ビルドでの動作、LICENSE.txt 同梱内容とライセンス義務の最終確認（5.4） | LGPL ビルドで不足があれば `win64-gpl` へ変更（ダウンロード方式のため再配布義務は同様に非該当。記録方式は不変）。BtbN 不安定なら gyan.dev release ビルドへ変更 |
-| Q-9 | Recorder 出力の MP4 / MOV(ProRes) へ `-c:v copy` + コーデックマトリクスで mux が成立する | 実 Recorder 出力ファイルでの mux 成功、faststart の効果、ストリーム長差の実測（7.4 の許容誤差検証）、mux 所要時間（タイムアウト式の係数調整） | コンテナ互換問題があれば当該コンテナのみ remux オプション調整（例: タイムスケール指定）。ProRes + AAC 等の組合せ変更は D-6 の再協議 |
-| Q-10 | 時間正規化ステップ 1–2（祖先累積式）が Unity 実挙動と一致する | ネスト 2 段 + timeScale 0.5/2.0 + ControlClip clipIn ありの構成で、実再生の発音タイミングと式の算出値の一致（2.3 / D-5）。祖先可視窓クランプの実挙動 | 式が実挙動と乖離した場合は C# 実装（extract 内）を実測に合わせて修正。スキーマ・TS 側は不変 |
-| Q-11 | `amix=normalize=0` が Unity の加算ミックス挙動と同等である（**仮説**） | Unity Editor 上で複数音源（音量差・重なりあり）を同時再生した基準波形・ピーク値・クリッピング挙動を採取し、同一構成の ffmpeg 出力波形と比較して同等性を実測する（4.1） | 結果が一致しない場合はゲイン計算（クリップ/トラック音量の畳み込み式）またはミックス方式（amix パラメータ・別フィルタ構成）を再決定し、本設計へ反映する。design 確定ゲート（NO-GO）対象 |
+**スパイクの結果として本設計を変更した箇所**:
 
-**スパイク後に本設計へ反映する項目**: Q-3/Q-4 の API マッピング表確定（採用 API・対応 Unity/Timeline バージョン範囲・SerializedObject fallback の安定性）、Q-7 の `pitchMode` 既定値、Q-8 の `FfmpegManifest` 定数、Q-9 のタイムアウト係数と 7.4 実測値、Q-11 のミックス方式（`normalize=0` の採否またはゲイン計算/方式の再決定）。反映完了を該当コンポーネント実装タスクの開始条件とする。
+1. **抽出 JSON の生成方式**: `JsonUtility` + `[Serializable]` DTO → **手書き JSON ライタ（StringBuilder）**。eval ペイロードはメソッド本体に包まれるため型宣言ができず、`JsonUtility` は入れ子カスタム型を直列化から落とす（Q-6）
+2. **atomic write**: `File.Move` → **`File.Replace`（宛先が既存のとき）**
+3. **API マッピング表**: クリップ音量 / トラック音量 / 階層ミュートを `SerializedObject` + 祖先走査で確定。Packages 専用の絶対パス解決は不要と確定。音源長は ffprobe を正とする（Q-3 / Q-4 / Q-5）
+4. **ステレオ正規化**: `aformat` を使う（`pan` は不可）。Unity も -3.01 dB することを実測（Q-8 / Q-11）
+5. **`FfmpegManifest`**: 恒久タグ・SHA-256 を確定。ライセンス種別を `LGPL-2.1-or-later` → **`LGPL-3.0-or-later`** に訂正（Q-8）
+6. **出力の総サンプル数**: 映像長 × 48000 から導出することを明記（Q-9）
+7. **`atempo` の長さドリフト**: `preserve-pitch` を使う場合の長さ強制を必須化（Q-7）
+8. **同等性の判定基準**: サンプル/ピーク一致 → **区間 RMS ≤ 0.5 dB**（Q-11）
+
+**残課題（実装をブロックしない）**:
+
+- **Q-10 の絶対位置ずれ**: 時間正規化の式そのものは検証済み（ネスト時刻・実効速度の累積とも一致）で、ffmpeg 側の出力はサンプル厳密。ただし Unity 実再生音の収録では公称位置から -57〜+21 ms の**再現性のあるずれ**が観測された。発生源（Timeline の音声スケジューリング / Recorder の音声収録経路）は未切り分けで、タスク 6.1 で扱う。タスク 6.1 の同期精度判定は **ffmpeg 出力のクリック位置が計画値と一致すること**を基準とし、Unity 収録音との比較は参考値に留める
+
+| ID | 結果 | 採用経路 / 確定値 |
+|----|------|-------------------|
+| Q-1 | **成立** | `GetOutputTracks()`（GroupTrack 配下も平坦化される）+ `sourceGameObject.Resolve(owner)`（eval コンテクストで動作、解決不能時は null）。代替走査は不要 |
+| Q-2 | **成立** | 公開 API そのまま。ループの折り返しは実再生音で確認（0.5 s 音源が 2.5 s クリップ全域で連続） |
+| Q-3 | **成立（fallback 採用）** | `SerializedObject("m_ClipProperties.volume")`。公開 API は存在しない |
+| Q-4 | **成立（fallback 採用）** | `SerializedObject("m_TrackProperties.volume")` + `TrackAsset.parent` 祖先走査。ミュートが実際に音を落とすことも収録で確認 |
+| Q-5 | **成立** | `GetAssetPath` + `Path.GetFullPath`（`Packages/...` も remap で解決、registry package 含む）。ファイル実体なしは `IsSubAsset` + 拡張子で検出。mp3 の `AudioClip.length` はパディングを含むため音源長は ffprobe を正とする |
+| Q-6 | **不成立 → fallback 採用** | `JsonUtility` は eval ペイロードで使用不可（型宣言不可・入れ子カスタム型が落ちる）。**手書き JSON ライタ**を採用。150 クリップで 51,976 bytes / 走査+直列化 4 ms。atomic write は `File.Replace` |
+| Q-7 | **確定: resample** | Unity は変速でピッチも変動（440×2.0 → 880 Hz、1000×1.5 → 1500.4 Hz）。`asetrate` は全速度でサンプル厳密、`atempo` は 0.1〜0.33% の長さドリフトあり |
+| Q-8 | **確定** | `autobuild-2026-08-22-12-58` / `ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1` / SHA-256 `aa5ff0d7…` / **LGPL v3**。必要フィルタ・エンコーダすべて動作。`latest` タグはローリングのため使用不可 |
+| Q-9 | **成立** | 実 Recorder 出力（h264 MP4 / ProRes MOV）へ `-c:v copy` で mux 成立。ストリーム長差 **0.000 フレーム**（総サンプル数を映像長基準にした場合）。mux 所要 0.19 s / 0.03 s |
+| Q-10 | **部分成立** | 式は検証済み（ネスト時刻 11.0 / 13.0、実効速度 0.5 / 1.0 が一致）。ffmpeg 出力は公称位置と最大 7 サンプル差。Unity 収録音の絶対位置ずれ（-57〜+21 ms、再現性あり）は発生源未切り分け → タスク 6.1 |
+| Q-11 | **成立** | `amix=normalize=0`（純粋な加算）。Unity との区間 RMS 一致 0.09〜0.11 dB。ゲインモデル（クリップ音量 × トラック音量、モノラル -3.01 dB）も一致。**同等性基準は区間 RMS ≤ 0.5 dB**（サンプル/ピーク一致は不可能） |
+
+**同等性がサンプル一致にならない理由（Q-11 実測）**: ①Unity の既定 AudioImporter は .wav でも Vorbis に再エンコードするため、Unity は非可逆デコード後の波形を鳴らし ffmpeg は元 PCM を読む ②Unity 自身の出力がラン間でサンプル一致しない（同一構成の 2 回収録で最大差 1.004 / RMS 差 -12.96 dBFS、880 Hz 成分が約 27 サンプル位相ずれ） ③ffmpeg のリサンプラは鋭い過渡音でオーバーシュートする（0.5 倍速のクリック列でピーク 1.166 / Unity 0.911）。
 
 ## Supporting References
 
