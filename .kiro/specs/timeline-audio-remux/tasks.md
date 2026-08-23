@@ -1,6 +1,6 @@
 # Implementation Plan — timeline-audio-remux
 
-> **実装ゲート（NO-GO 規則）**: タスク 1（Timeline 固有の検証スパイク）が完了し、`spike/timeline-audio/README.md` に実測ログ・GO 判定・ユーザー承認が記録されるまで、**タスク 2 以降のすべての実装タスクに着手してはならない**。Q-1〜Q-6（抽出成立性）のいずれかが不成立、または Q-11（ミックス同等性）が design 確定に至らない場合は後続タスクへ進まず、代替方針の再検討をユーザーに提示する（Requirement 12.3、design「Research Needed / スパイク依存の暫定決定」参照）。
+> **実装ゲート（NO-GO 規則）— 2026-08-23 通過済み**: タスク 1 の検証スパイクは完了し、`spike/timeline-audio/README.md` に Q-1〜Q-11 の実測ログ・**GO 判定・ユーザー承認**が記録された。タスク 2 以降の実装に着手してよい。確定値は design.md の該当節へ反映済み（JSON 生成方式・API マッピング表・FfmpegManifest・pitchMode・ミックス方式・同期精度の判定基準）。以下は当初のゲート条件（記録として残す）: Q-1〜Q-6（抽出成立性）のいずれかが不成立、または Q-11（ミックス同等性）が design 確定に至らない場合は後続タスクへ進まず、代替方針の再検討をユーザーに提示する（Requirement 12.3、design「Research Needed / スパイク依存の暫定決定」参照）。
 >
 > **クロススペック依存（unity-render-core）**: 本 Spec は unity-render-core と同一コードベース・同一 .exe に組み込まれる。以下の core 側成果物を前提とするタスクには、各タスクの詳細に前提を明記する:
 > - スパイク（タスク 1）: core の検証スパイク環境（実 Unity 6 テストプロジェクト + eval 送信経路。core tasks 2.1–2.2 の P-1 成立、または最小同等の eval 経路）
@@ -9,7 +9,7 @@
 >
 > **トレース規約**: 本ファイルの `_Requirements:_` は requirements.md の数値 ID `N.M` を用いる。コード・テスト内の trace タグ（`@impl` / spec タグ）では接頭辞付きの `TAR-N.M`（例: `TAR-7.2`）を用いる（design Traceability 節）。
 
-- [ ] 1. Timeline 固有の検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
+- [x] 1. Timeline 固有の検証スパイクを実施し実装ゲートを通過する（GO/NO-GO 判定）
 - [x] 1.1 スパイク計画文書と検証用 Timeline 構成を準備する
   - `spike/timeline-audio/README.md` に検証項目 Q-1〜Q-11 の全一覧・各項目の確認内容・成功基準・失敗基準を design から転記・具体化して記録する
   - core スパイク用の実 Unity 6 テストプロジェクトに、検証に必要な Timeline 構成（2 段以上のネスト・GroupTrack 配下の AudioTrack・変速クリップ・ループクリップ・ミュートトラック・ControlClip timeScale・参照切れ ControlClip・複数音源の重なり）を追加し、所在と前提条件を文書に記録する
@@ -43,7 +43,7 @@
   - _Requirements: 12.1, 12.2_
   - Files: spike/timeline-audio/README.md
 
-- [ ] 1.5 GO/NO-GO を判定しユーザー承認を得て設計へ反映する
+- [x] 1.5 GO/NO-GO を判定しユーザー承認を得て設計へ反映する
   - Q-1〜Q-11 の確定結果（採用 / フォールバック採用 / 不成立）を `spike/timeline-audio/README.md` に総括し、GO/NO-GO 判定を明記する
   - 判定結果をユーザーに報告して承認を求め、承認状態を `spike/timeline-audio/README.md` に記録する。**承認完了までタスク 2 以降には着手しない**。NO-GO（Q-1〜Q-6 の抽出不成立、または Q-11 の同等性未確定）の場合は後続実装へ進まず、代替方針の再検討をユーザーに提示する
   - 確定した暫定決定（API マッピング表の採用経路・pitchMode 既定値・FfmpegManifest・コーデックマトリクス・タイムアウト式・ミックス方式）を design.md の該当セクションへ反映する
