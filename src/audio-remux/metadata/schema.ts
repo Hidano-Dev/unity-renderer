@@ -32,6 +32,7 @@ const audioClipEntrySchema = z
 		id: nonEmptyString,
 		trackPath: nonEmptyString,
 		sourcePath: nonEmptyString,
+		sourceSampleRate: finiteNumber.int().positive().optional(),
 		sourceDurationSec: finiteNumber.positive(),
 		rootStartSec: finiteNumber.nonnegative(),
 		rootEndSec: finiteNumber,

@@ -8,6 +8,8 @@ export interface PlacedClip {
 	readonly clipId: string;
 	readonly inputIndex: number;
 	readonly sourcePath: string;
+	/** Original decoder sample rate; required as the asetrate reference when known. */
+	readonly sourceSampleRate?: number;
 	readonly loop: boolean;
 	readonly sourceTrimStartSec: number;
 	readonly sourceTrimEndSec: number;
@@ -71,6 +73,7 @@ export function buildMixPlan(
 			clipId: clip.id,
 			inputIndex: clips.length,
 			sourcePath: clip.sourcePath,
+			sourceSampleRate: clip.sourceSampleRate,
 			loop: placement.loop,
 			sourceTrimStartSec: placement.sourceTrimStartSec,
 			sourceTrimEndSec: placement.sourceTrimEndSec,

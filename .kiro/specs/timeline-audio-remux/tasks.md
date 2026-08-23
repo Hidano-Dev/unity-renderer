@@ -91,7 +91,7 @@
   - _Boundary: ffmpeg/acquire_
   - Files: src/audio-remux/ffmpeg/manifest.ts, src/audio-remux/ffmpeg/acquire.ts, tests/audio-remux/ffmpeg/acquire.test.ts
 
-- [ ] 3.2 (P) filter graph 構築とコーデックマトリクスを実装する
+- [x] 3.2 (P) filter graph 構築とコーデックマトリクスを実装する
   - クリップごとのフィルタチェーン（トリム → 変速 → ステレオ/48kHz 正規化 → 音量 → サンプル指定遅延）と、amix によるミックス（スパイク Q-11 で確定した方式）・apad/atrim によるストリーム長確定を、決定的な filter script 文字列として生成する
   - 変速フィルタの両モード（resample / preserve-pitch）を実装し、既定値はスパイク Q-7 の確定値に従う。ループクリップには入力の無限繰り返し指定を付与する
   - コンテナ別コーデック引数（MP4 → AAC 48kHz、MOV(ProRes) → PCM 24bit。スパイク確定値）を設定項目なしの自動選択として実装する
