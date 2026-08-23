@@ -48,12 +48,19 @@ describe("project recovery", () => {
 			path.join(root, "Packages", "manifest.json"),
 			"corrupted\n",
 		);
-		const recovered = await recoverStaleSessions(root, { sessionRoot });
+		// クラッシュした前回実行を模擬: 所有プロセスはもう生きていない
+		const isProcessAlive = () => false;
+		const recovered = await recoverStaleSessions(root, {
+			sessionRoot,
+			isProcessAlive,
+		});
 		expect(recovered.ok).toBe(true);
 		expect(
 			await readFile(path.join(root, "Packages", "manifest.json"), "utf8"),
 		).toBe('{"dependencies":{"base":"1"}}\n');
-		expect(await detectStaleSessions({ sessionRoot })).toHaveLength(0);
+		expect(
+			await detectStaleSessions({ sessionRoot, isProcessAlive }),
+		).toHaveLength(0);
 	});
 
 	it("deletes a lock file that did not exist before the session", async () => {
@@ -73,6 +80,22 @@ describe("project recovery", () => {
 		await expect(
 			readFile(path.join(root, "Packages", "packages-lock.json")),
 		).rejects.toThrow();
+	});
+
+	it("protects a live session owned by this very process (in-process concurrency)", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		// beginProjectSession は既定で process.pid を ownerPid に記録する
+		const started = await beginProjectSession(root, { sessionRoot });
+		expect(started.ok).toBe(true);
+
+		// 自プロセスは生存中なので、既定の生存判定でも復旧対象にならない
+		expect(await detectStaleSessions({ sessionRoot })).toHaveLength(0);
+		const guarded = await recoverStaleSessions(root, { sessionRoot });
+		expect(guarded).toMatchObject({ ok: true, value: [] });
 	});
 
 	it("does not treat a session owned by a live process as stale", async () => {

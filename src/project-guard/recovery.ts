@@ -100,11 +100,11 @@ export async function detectStaleSessions(
 			);
 			if (session.status !== "active") continue;
 			// 所有プロセスが生存している active セッションは実行中であり、
-			// クラッシュ残骸ではない(復旧すると稼働中の CLI の状態を破壊する)
+			// クラッシュ残骸ではない(復旧すると稼働中の CLI の状態を破壊する)。
+			// 自プロセス PID も同様に保護する(同一プロセス内の並走実行)。稀な
+			// PID 再利用による見逃しは beginProjectSession の同時実行拒否が止める
 			const ownedByLiveProcess =
-				session.ownerPid !== undefined &&
-				session.ownerPid !== process.pid &&
-				isAlive(session.ownerPid);
+				session.ownerPid !== undefined && isAlive(session.ownerPid);
 			if (!ownedByLiveProcess) sessions.push(session);
 		} catch {
 			// A partial metadata file cannot safely identify a project and is left untouched.
