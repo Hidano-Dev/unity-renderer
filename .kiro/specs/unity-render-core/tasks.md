@@ -256,7 +256,7 @@
   - _Requirements: 15.1, 15.2, 15.3_
   - Files: src/cli/check.ts, src/cli/init.ts, tests/cli/check.test.ts, tests/cli/init.test.ts
 
-- [ ] 10. 結合検証と実機 E2E を実施する
+- [x] 10. 結合検証と実機 E2E を実施する
 - [x] 10.1 フェイクを用いた結合テスト一式を整備する
   - フェイク HTTP サーバ（7800 模擬）による接続待ちリトライ・eval 応答・接続タイムアウト→強制終了経路の検証を実装する
   - status-channel の completed / failed / タイムアウト 3 経路と部分書き込みスキップの結合検証を実装する
@@ -265,7 +265,7 @@
   - _Requirements: 7.2, 7.3, 10.2, 15.2_
   - Files: tests/integration/editor-session.test.ts, tests/integration/status-channel.test.ts, tests/integration/cli-check.test.ts
 
-- [ ] 10.2 実 Unity プロジェクトでの E2E 手動シナリオを実施する
+- [x] 10.2 実 Unity プロジェクトでの E2E 手動シナリオを実施する
   - 2 Scene バッチ（MP4 + MOV(ProRes)）の実行と成否一覧・出力ファイルの実測確認を行う
   - 実行前後で対象プロジェクトの `git status` がクリーンであること（`Library/` 等は対象外）を確認する
   - Editor 強制終了（クラッシュ模擬）後の次回起動でのバックアップ残骸検出・通知・復元を確認する
