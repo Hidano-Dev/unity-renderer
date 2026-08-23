@@ -111,6 +111,17 @@ var rootDirector = MakeDirector("Root");
 var l1Director = MakeDirector("NestedL1");
 var l2Director = MakeDirector("NestedL2");
 
+// An AudioListener is required for anything to reach Unity's audio output, and
+// therefore for Recorder's AudioRecorderSettings to capture the reference mix
+// (Q-7 / Q-10 / Q-11). The camera is only there so the scene is also usable for
+// a video capture pass (Q-9).
+var camGo = new UnityEngine.GameObject("MainCamera");
+camGo.tag = "MainCamera";
+var cam = camGo.AddComponent<UnityEngine.Camera>();
+cam.clearFlags = UnityEngine.CameraClearFlags.SolidColor;
+cam.backgroundColor = new UnityEngine.Color(0.1f, 0.1f, 0.15f, 1f);
+camGo.AddComponent<UnityEngine.AudioListener>();
+
 // Decoy: a plain scene AudioSource that the extractor must NOT pick up
 // (requirement 1.x - scanning starts from the TimelineAsset, not the scene).
 var decoy = new UnityEngine.GameObject("DecoyAudioSource");
