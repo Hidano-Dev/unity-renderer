@@ -12,14 +12,9 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import {
-	acquireExclusiveLock,
-	releaseExclusiveLock,
-} from "../shared/exclusive-lock.js";
-import {
 	canonicalProjectPath,
 	resolveSessionDirectory,
 } from "../shared/paths.js";
-import { rollbackPromotionJournals } from "../shared/promotion-journal.js";
 import { err, ok, type Result } from "../shared/types.js";
 import { type AddedPackage, patchManifest } from "./manifest-patch.js";
 
@@ -82,14 +77,6 @@ export interface BackupOptions {
 	readonly writeSession?: (session: BackupSession) => Promise<void>;
 }
 
-function defaultIsProcessAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (cause) {
-		return (cause as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
 const manifestFiles = [
 	{
 		relativePath: "Packages/manifest.json",
@@ -151,35 +138,6 @@ function sessionDirectoryName(projectKey: string, now: Date): string {
 	return `${projectHashOf(projectKey)}-${now.toISOString().replace(/[-:.TZ]/g, "")}`;
 }
 
-/**
- * 生存ロックが到達し得ない老朽閾値。begin 区間(チェック + manifest バックアップ +
- * パッチ)は通常 1 秒未満で完了するため、これより古い active ロックは残骸とみなす。
- */
-/**
- * findActiveSessions → beginBackupSession のチェック→作成区間を直列化する
- * 排他ロック。実装は shared/exclusive-lock を共有する。
- */
-export async function acquireBeginLock(
-	sessionRoot: string,
-	projectKey: string,
-	isAlive: (pid: number) => boolean,
-): Promise<Result<string, GuardError>> {
-	const acquired = await acquireExclusiveLock(
-		path.join(sessionRoot, `${projectHashOf(projectKey)}.begin.lock`),
-		{
-			isProcessAlive: isAlive,
-			heldMessage:
-				"別の実行がこのプロジェクトのセッションを開始中です。同時実行はできません。",
-			staleMessage:
-				"直前の実行が残したセッション開始ロックを検出しました。終了処理中の可能性があるため、30 秒ほど待って再実行してください。",
-		},
-	);
-	return acquired.ok
-		? acquired
-		: failure("io-error", acquired.error.message, acquired.error.cause);
-}
-
-export const releaseBeginLock = releaseExclusiveLock;
 async function atomicRestore(source: string, target: string): Promise<void> {
 	const temporary = `${target}.${randomUUID()}.restore.tmp`;
 	try {
@@ -199,17 +157,6 @@ export async function restoreBackupSession(
 	session: BackupSession,
 ): Promise<Result<void, GuardError>> {
 	try {
-		// 出力公開の途中で落ちた場合、退避された旧動画がジャーナルに記録されている。
-		// セッションディレクトリを消す前に元へ戻す
-		const unresolved = await rollbackPromotionJournals(
-			session.sessionDirectory,
-		);
-		if (unresolved.length > 0)
-			return err({
-				kind: "restore-failed",
-				message: `出力の巻き戻しに失敗しました。手動で戻してください: ${unresolved.join(", ")}`,
-				manualRecoveryHint: `退避ファイルを元の名前へ戻してください: ${unresolved.join(", ")}`,
-			});
 		for (const file of session.files) {
 			const target = path.join(session.projectPath, file.relativePath);
 			const backup = path.join(session.sessionDirectory, file.backupFileName);
@@ -348,52 +295,42 @@ export async function beginProjectSession(
 			cause,
 		);
 	}
-	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
-	const lock = await acquireBeginLock(
+	// 同一プロジェクトの二重実行は active セッションの有無で拒否する。単一実行を
+	// 前提とするツールのため、チェックと作成の間のごく短い競合窓は許容する
+	const activeSessions = await findActiveSessions(projectPath, sessionRoot);
+	if (activeSessions.length > 0)
+		return failure(
+			"io-error",
+			"An active backup session already exists for this project; refuse concurrent execution.",
+			new Error(
+				activeSessions.map((session) => session.sessionDirectory).join(", "),
+			),
+		);
+	const backup = await beginBackupSession(projectPath, {
+		...options,
 		sessionRoot,
-		await projectIdentityKey(projectPath),
-		isAlive,
-	);
-	if (!lock.ok) return lock;
+	});
+	if (!backup.ok) return backup;
+	// パッチ以降の失敗はプロジェクトを一時変更したまま返ってしまう。バッチは
+	// 開始されず復元も走らないため、この関数の中で必ず巻き戻す
+	const patched = await patchManifest(projectPath);
+	if (!patched.ok) return rollback(backup.value, patched);
+	const session = {
+		...backup.value,
+		addedPackages: patched.value,
+	} satisfies BackupSession;
 	try {
-		const activeSessions = await findActiveSessions(projectPath, sessionRoot);
-		if (activeSessions.length > 0)
-			return failure(
-				"io-error",
-				"An active backup session already exists for this project; refuse concurrent execution.",
-				new Error(
-					activeSessions.map((session) => session.sessionDirectory).join(", "),
-				),
-			);
-		const backup = await beginBackupSession(projectPath, {
-			...options,
-			sessionRoot,
+		await (options.writeSession ?? writeBackupSession)(session);
+		return ok(session);
+	} catch (cause) {
+		return rollback(session, {
+			ok: false,
+			error: {
+				kind: "io-error",
+				message: "Session metadata could not be updated after manifest patch.",
+				cause,
+			},
 		});
-		if (!backup.ok) return backup;
-		// パッチ以降の失敗はプロジェクトを一時変更したまま返ってしまう。バッチは
-		// 開始されず復元も走らないため、この関数の中で必ず巻き戻す
-		const patched = await patchManifest(projectPath);
-		if (!patched.ok) return rollback(backup.value, patched);
-		const session = {
-			...backup.value,
-			addedPackages: patched.value,
-		} satisfies BackupSession;
-		try {
-			await (options.writeSession ?? writeBackupSession)(session);
-			return ok(session);
-		} catch (cause) {
-			return rollback(session, {
-				ok: false,
-				error: {
-					kind: "io-error",
-					message:
-						"Session metadata could not be updated after manifest patch.",
-					cause,
-				},
-			});
-		}
-	} finally {
-		await releaseBeginLock(lock.value);
 	}
 }
 export const beginSession = beginProjectSession;

@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename, rm, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { OutputFormat } from "../config/schema.js";
 import {
@@ -8,7 +7,6 @@ import {
 	type OutputWildcard,
 	outputWildcardNames,
 } from "../shared/output-wildcards.js";
-import { writePromotionJournal } from "../shared/promotion-journal.js";
 
 /** @impl URC-3.1 @impl URC-3.2 @impl URC-10.3 @impl URC-10.7 */
 
@@ -185,69 +183,17 @@ export async function planOutputs(
  * 検証済みの staging ファイルを最終パスへ公開する。ここで初めて既存の同名出力が
  * 置き換わるため、失敗した録画が既存物を壊すことはない。
  *
- * 公開はセット単位で全か無かにする。MP4 と MOV を出す構成で 2 件目の rename が
- * 失敗した場合、1 件目だけが置き換わるとフォーマット間で世代が混ざり、以前の
- * 正常な動画も失われる。そのため既存出力を退避してから置換し、途中で失敗したら
- * 置換済みを staging へ戻し、退避した既存出力を復帰させる。
+ * rename は既存ファイルを原子的に置換する。2 形式指定で 2 件目が失敗した場合は
+ * 1 件目だけが新しい世代になるが、いずれのファイルも失われない。次回の成功実行で
+ * 揃うため、退避・ロールバックは行わない(単一実行前提のツールに対して機構が
+ * 見合わないため)。
  */
-export interface PromoteOptions {
-	/**
-	 * 退避情報を記録するジャーナルのパス。プロセスや OS が公開の途中で落ちても、
-	 * 次回起動の復旧がここから旧出力を戻せるようにする。
-	 */
-	readonly journalPath?: string;
-}
-
 export async function promoteOutputFiles(
 	outputs: readonly PlannedOutput[],
-	options: PromoteOptions = {},
 ): Promise<void> {
-	// 退避「予定」を rename より先に記録する。記録前に落ちれば退避もされておらず、
-	// 記録後に落ちた場合は復旧が退避先を辿れる。退避が実行されなかった予定は
-	// 復旧時に退避先が存在しないため無視される
-	const planned: { readonly path: string; readonly backup: string }[] = [];
-	const displaced: { readonly path: string; readonly backup: string }[] = [];
-	const promoted: PlannedOutput[] = [];
-	try {
-		for (const output of outputs) {
-			const backup = `${output.path}.${randomUUID()}.previous`;
-			planned.push({ path: output.path, backup });
-			if (options.journalPath)
-				await writePromotionJournal(options.journalPath, {
-					displaced: planned,
-				});
-			try {
-				await rename(output.path, backup);
-				displaced.push({ path: output.path, backup });
-			} catch (error) {
-				// 既存出力が無いのが通常。それ以外の失敗は公開を中止する
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-			}
-			await rename(output.stagingPath, output.path);
-			promoted.push(output);
-		}
-	} catch (cause) {
-		// 補償処理の失敗を握り潰すと、旧動画の欠落や形式間の世代混在が
-		// 通常の公開失敗と区別できなくなる。残存物を添えて報告する
-		const unresolved: string[] = [];
-		for (const output of promoted)
-			await rename(output.path, output.stagingPath).catch(() =>
-				unresolved.push(`公開済みを staging へ戻せません: ${output.path}`),
-			);
-		for (const { path, backup } of displaced)
-			await rename(backup, path).catch(() =>
-				unresolved.push(`退避した旧出力を戻せません: ${backup} → ${path}`),
-			);
-		if (unresolved.length > 0)
-			throw new Error(
-				`出力の公開に失敗し、巻き戻しも完了しませんでした: ${cause instanceof Error ? cause.message : String(cause)}\n手動復旧が必要です:\n- ${unresolved.join("\n- ")}`,
-				{ cause },
-			);
-		if (options.journalPath) await rm(options.journalPath, { force: true });
-		throw cause;
+	for (const output of outputs) {
+		await rename(output.stagingPath, output.path);
 	}
-	for (const { backup } of displaced) await rm(backup, { force: true });
-	if (options.journalPath) await rm(options.journalPath, { force: true });
 }
 
 export async function validateOutputFiles(

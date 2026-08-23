@@ -1,15 +1,13 @@
 import type { Dirent } from "node:fs";
-import { mkdir, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { resolveSessionDirectory } from "../shared/paths.js";
-import { err, ok, type Result } from "../shared/types.js";
+import { ok, type Result } from "../shared/types.js";
 import {
-	acquireBeginLock,
 	type BackupSession,
 	type GuardError,
 	projectIdentityKey,
 	readBackupSession,
-	releaseBeginLock,
 	restoreBackupSession,
 	sessionMatchesProject,
 } from "./backup.js";
@@ -28,19 +26,6 @@ function defaultIsProcessAlive(pid: number): boolean {
 		// EPERM はプロセスが存在するがシグナル送信権限が無い場合
 		return (cause as NodeJS.ErrnoException).code === "EPERM";
 	}
-}
-
-function restoreFailure(
-	message: string,
-	cause: unknown,
-): Result<never, GuardError> {
-	return err({
-		kind: "restore-failed",
-		message,
-		cause,
-		manualRecoveryHint:
-			"Keep the active session directory and retry recovery before running another render.",
-	});
 }
 
 export const restoreSession = restoreBackupSession;
@@ -100,34 +85,17 @@ export async function recoverStaleSessions(
 	if (!rootResult.ok)
 		// セッションディレクトリを解決できない環境では復旧対象も存在しない
 		return ok([]);
-	// 初回実行ではセッションルートが未作成で、ロックの一時ファイル書き込みが
-	// ENOENT になる。復旧対象が無くても preflight を落とさないよう先に作る
-	try {
-		await mkdir(rootResult.value, { recursive: true });
-	} catch (cause) {
-		return restoreFailure(
-			"セッションディレクトリを作成できませんでした。",
-			cause,
-		);
-	}
-	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
 	const projectKey = await projectIdentityKey(projectPath);
-	const lock = await acquireBeginLock(rootResult.value, projectKey, isAlive);
-	if (!lock.ok) return lock;
-	try {
-		const sessions = (await detectStaleSessions(options)).filter((session) =>
-			sessionMatchesProject(session, projectKey),
-		);
-		const recovered: BackupSession[] = [];
-		for (const session of sessions) {
-			const result = await restoreSession(session);
-			if (!result.ok) return result;
-			recovered.push(session);
-		}
-		return ok(recovered);
-	} finally {
-		await releaseBeginLock(lock.value);
+	const sessions = (await detectStaleSessions(options)).filter((session) =>
+		sessionMatchesProject(session, projectKey),
+	);
+	const recovered: BackupSession[] = [];
+	for (const session of sessions) {
+		const result = await restoreSession(session);
+		if (!result.ok) return result;
+		recovered.push(session);
 	}
+	return ok(recovered);
 }
 
 export async function recoverProject(

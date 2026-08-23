@@ -2,10 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	beginProjectSession,
-	projectIdentityKey,
-} from "../../src/project-guard/backup.js";
+import { beginProjectSession } from "../../src/project-guard/backup.js";
 import {
 	detectStaleSessions,
 	recoverStaleSessions,
@@ -199,63 +196,5 @@ describe("project recovery", () => {
 		// 別名でも同一プロジェクトと判定し、二重に manifest を触らせない
 		const viaAlias = await beginProjectSession(alias, { sessionRoot });
 		expect(viaAlias.ok).toBe(false);
-	});
-
-	it("serializes simultaneous session starts so exactly one wins", async () => {
-		const root = await project();
-		const sessionRoot = await mkdtemp(
-			path.join(os.tmpdir(), "urc-recovery-sessions-"),
-		);
-		temporaryDirectories.push(sessionRoot);
-		// begin ロックがチェック→作成区間を直列化し、二重 active session を防ぐ
-		const results = await Promise.all([
-			beginProjectSession(root, { sessionRoot }),
-			beginProjectSession(root, { sessionRoot }),
-		]);
-		expect(results.filter((result) => result.ok)).toHaveLength(1);
-	});
-
-	it("steals a begin lock only when the owner is dead and the lock has aged", async () => {
-		const root = await project();
-		const sessionRoot = await mkdtemp(
-			path.join(os.tmpdir(), "urc-recovery-sessions-"),
-		);
-		temporaryDirectories.push(sessionRoot);
-		const { createHash } = await import("node:crypto");
-		const { utimes } = await import("node:fs/promises");
-		// ロック名は別名パスを畳み込んだ同一性キーから導出される
-		const hash = createHash("sha256")
-			.update(await projectIdentityKey(root))
-			.digest("hex")
-			.slice(0, 12);
-		const lockPath = path.join(sessionRoot, `${hash}.begin.lock`);
-		await writeFile(lockPath, JSON.stringify({ pid: 99999 }));
-
-		// 所有プロセス生存中 → 同時実行として拒否
-		const refusedAlive = await beginProjectSession(root, {
-			sessionRoot,
-			isProcessAlive: () => true,
-		});
-		expect(refusedAlive.ok).toBe(false);
-
-		// 所有プロセス死亡でも mtime が新しい → 終了処理直後の可能性があり拒否
-		const refusedFresh = await beginProjectSession(root, {
-			sessionRoot,
-			isProcessAlive: () => false,
-		});
-		expect(refusedFresh.ok).toBe(false);
-		if (!refusedFresh.ok)
-			expect(refusedFresh.error.message).toContain("再実行");
-
-		// 所有プロセス死亡 + 老朽閾値超過 → 残骸として奪取
-		const aged = new Date(Date.now() - 60_000);
-		await utimes(lockPath, aged, aged);
-		const stolen = await beginProjectSession(root, {
-			sessionRoot,
-			isProcessAlive: () => false,
-		});
-		expect(stolen.ok).toBe(true);
-		// 奪取したロックは自分の所有として作り直され、完了時に解放されている
-		await expect(readFile(lockPath)).rejects.toThrow();
 	});
 });
