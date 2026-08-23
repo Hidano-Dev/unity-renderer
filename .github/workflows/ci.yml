@@ -97,3 +97,8 @@ jobs:
           if ($text -notlike "*EditorApplication.Exit(0)*") {
             throw "The compiled executable does not contain the embedded C# templates"
           }
+
+          # check は意図的に失敗させているため $LASTEXITCODE は 1 のまま残る。
+          # Actions の pwsh ラッパーはそれをステップの終了コードに使うので、
+          # 全アサーション通過を明示的に成功として返す
+          exit 0
