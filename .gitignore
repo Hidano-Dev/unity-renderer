@@ -24,3 +24,6 @@ dist/
 coverage/
 .artgraph/trace/
 *.jsonl
+
+# Temporary E2E project (created ad hoc during manual scenarios)
+.tmp-e2e-run*/
