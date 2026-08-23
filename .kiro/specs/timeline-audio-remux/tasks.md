@@ -61,7 +61,7 @@
   - _Boundary: metadata_
   - Files: src/audio-remux/metadata/schema.ts, src/audio-remux/metadata/load.ts, tests/audio-remux/metadata/schema.test.ts, tests/audio-remux/metadata/load.test.ts
 
-- [ ] 2.2 (P) 時間正規化の純関数群を実装する
+- [x] 2.2 (P) 時間正規化の純関数群を実装する
   - 時間正規化の後半ステップ（clipIn 適用 → ループ折り返し → イン点頭出し → アウト点打ち切り）を Unity 非依存の純関数として実装する
   - イン点より前に開始し再生中のクリップの頭出し位置（ループ・変速を含む式）と、アウト点跨ぎクリップの打ち切り・出力配置遅延の算出を実装する
   - 境界挙動（速度 0・負・非有限のスキップ、空区間・音源長ゼロの通常除外、clipIn 負値のクランプ、非ループの音源末尾自然終端）を design の確定どおり実装する
