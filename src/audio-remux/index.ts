@@ -55,8 +55,10 @@ const defaultDeps: AudioRemuxDeps = {
 
 function detail(error: unknown): string {
 	if (error instanceof Error) return error.message;
-	if (typeof error === "object" && error !== null && "message" in error)
-		return String(error.message);
+	if (typeof error === "object" && error !== null) {
+		if ("message" in error) return String(error.message);
+		if ("stderrTail" in error) return String(error.stderrTail);
+	}
 	return String(error);
 }
 
