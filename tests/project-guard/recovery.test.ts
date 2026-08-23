@@ -157,36 +157,46 @@ describe("project recovery", () => {
 		expect(results.filter((result) => result.ok)).toHaveLength(1);
 	});
 
-	it("steals a begin lock left behind by a dead process", async () => {
+	it("steals a begin lock only when the owner is dead and the lock has aged", async () => {
 		const root = await project();
 		const sessionRoot = await mkdtemp(
 			path.join(os.tmpdir(), "urc-recovery-sessions-"),
 		);
 		temporaryDirectories.push(sessionRoot);
 		const { createHash } = await import("node:crypto");
+		const { utimes } = await import("node:fs/promises");
 		const hash = createHash("sha256")
 			.update(path.resolve(root))
 			.digest("hex")
 			.slice(0, 12);
-		await writeFile(
-			path.join(sessionRoot, `${hash}.begin.lock`),
-			JSON.stringify({ pid: 99999 }),
-		);
+		const lockPath = path.join(sessionRoot, `${hash}.begin.lock`);
+		await writeFile(lockPath, JSON.stringify({ pid: 99999 }));
 
-		const refused = await beginProjectSession(root, {
+		// 所有プロセス生存中 → 同時実行として拒否
+		const refusedAlive = await beginProjectSession(root, {
 			sessionRoot,
 			isProcessAlive: () => true,
 		});
-		expect(refused.ok).toBe(false);
+		expect(refusedAlive.ok).toBe(false);
 
+		// 所有プロセス死亡でも mtime が新しい → 終了処理直後の可能性があり拒否
+		const refusedFresh = await beginProjectSession(root, {
+			sessionRoot,
+			isProcessAlive: () => false,
+		});
+		expect(refusedFresh.ok).toBe(false);
+		if (!refusedFresh.ok)
+			expect(refusedFresh.error.message).toContain("再実行");
+
+		// 所有プロセス死亡 + 老朽閾値超過 → 残骸として奪取
+		const aged = new Date(Date.now() - 60_000);
+		await utimes(lockPath, aged, aged);
 		const stolen = await beginProjectSession(root, {
 			sessionRoot,
 			isProcessAlive: () => false,
 		});
 		expect(stolen.ok).toBe(true);
 		// 奪取したロックは自分の所有として作り直され、完了時に解放されている
-		await expect(
-			readFile(path.join(sessionRoot, `${hash}.begin.lock`)),
-		).rejects.toThrow();
+		await expect(readFile(lockPath)).rejects.toThrow();
 	});
 });

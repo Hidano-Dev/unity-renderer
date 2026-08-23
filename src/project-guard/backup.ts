@@ -9,6 +9,7 @@ import {
 	readFile,
 	rename,
 	rm,
+	stat,
 	writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -123,11 +124,22 @@ function sessionDirectoryName(projectPath: string, now: Date): string {
 }
 
 /**
+ * 生存ロックが到達し得ない老朽閾値。begin 区間(チェック + manifest バックアップ +
+ * パッチ)は通常 1 秒未満で完了するため、これより古い active ロックは残骸とみなす。
+ */
+const STALE_BEGIN_LOCK_AGE_MS = 30_000;
+
+/**
  * findActiveSessions → beginBackupSession のチェック→作成区間を直列化する
  * 排他ロック。完全な内容を書いた一時ファイルを link(2) でアトミックに公開する
  * (link は EEXIST で失敗する排他作成)ため、公開されたロックの内容は常に完全で、
  * 「読めないロック = 書き込み途中」という誤認による生存ロックの奪取は起きない。
- * 死亡プロセスの残したロックのみ奪取する。
+ *
+ * 残骸の奪取は「所有プロセス死亡 かつ mtime が老朽閾値超過」の場合に限り、
+ * 削除直前に mtime の不変を再確認する。生存ロックは閾値より必ず新しいため
+ * 誤奪取されない。stat 再確認 → rm の間に別の奪取者と入れ替わるサブミリ秒の
+ * 理論的競合窓は残る(ファイルロックの原理的限界)が、成立には「残骸の存在 +
+ * 二重起動 + サブミリ秒の交錯」の重なりが必要で、運用上許容する。
  */
 async function acquireBeginLock(
 	sessionRoot: string,
@@ -151,6 +163,12 @@ async function acquireBeginLock(
 					"セッション開始ロックの作成に失敗しました。",
 					cause,
 				);
+			let observed: { mtimeMs: number } | undefined;
+			try {
+				observed = await stat(lockPath);
+			} catch {
+				continue; // 解放された直後。次の周回で取得を試みる
+			}
 			let lockOwnerPid: number | undefined;
 			try {
 				const parsed = JSON.parse(await readFile(lockPath, "utf8")) as {
@@ -158,14 +176,25 @@ async function acquireBeginLock(
 				};
 				lockOwnerPid = typeof parsed.pid === "number" ? parsed.pid : undefined;
 			} catch {
-				// link 公開により部分書き込みはあり得ない。読めない/消えたロックは
-				// 解放直後か真の残骸であり、次の周回で取得を試みる
+				continue; // 解放された直後。次の周回で取得を試みる
 			}
 			if (lockOwnerPid !== undefined && isAlive(lockOwnerPid))
 				return failure(
 					"io-error",
 					"別の実行がこのプロジェクトのセッションを開始中です。同時実行はできません。",
 				);
+			if (Date.now() - observed.mtimeMs < STALE_BEGIN_LOCK_AGE_MS)
+				return failure(
+					"io-error",
+					"直前の実行が残したセッション開始ロックを検出しました。終了処理中の可能性があるため、30 秒ほど待って再実行してください。",
+				);
+			// 奪取の直前に、観測した残骸が置き換わっていないことを再確認する
+			try {
+				const current = await stat(lockPath);
+				if (current.mtimeMs !== observed.mtimeMs) continue;
+			} catch {
+				continue;
+			}
 			await rm(lockPath, { force: true });
 		} finally {
 			await rm(temporaryPath, { force: true });
