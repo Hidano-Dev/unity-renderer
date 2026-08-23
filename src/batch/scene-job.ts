@@ -1,4 +1,3 @@
-import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveRecordingTimeoutSec } from "../config/load.js";
 import type { OutputFormat, RenderConfig } from "../config/schema.js";
@@ -22,6 +21,7 @@ import {
 	cleanupOutputFiles,
 	type PlannedOutput,
 	planOutputs,
+	promoteOutputFiles,
 	validateOutputFiles,
 } from "./output.js";
 
@@ -46,6 +46,12 @@ export interface SceneResult {
 	}[];
 	readonly durationSec: number;
 	readonly error?: string;
+	/**
+	 * Editor を終了できず、プロセスが生存したまま残った。ポート 7800 を握り
+	 * 続けるため後続 Scene は失敗し、package 状態を書き戻される恐れがある。
+	 * バッチはこのフラグで中断し、復元も行わない。
+	 */
+	readonly editorTerminationFailed?: boolean;
 }
 
 export interface SceneJobPlan {
@@ -74,6 +80,7 @@ export interface SceneJobDependencies {
 		debug: boolean,
 	) => Promise<void>;
 	readonly validate?: (paths: readonly string[]) => Promise<readonly string[]>;
+	readonly promote?: (outputs: readonly PlannedOutput[]) => Promise<void>;
 	readonly planOutputs?: typeof planOutputs;
 	readonly logger?: {
 		warn(message: string): void;
@@ -81,7 +88,6 @@ export interface SceneJobDependencies {
 	};
 	readonly now?: () => number;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
-	readonly fileExists?: (path: string) => Promise<boolean>;
 }
 
 /** Play Mode 遷移完了待ちで start-recording を再送する間隔 */
@@ -158,6 +164,7 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 		dependencies.statusChannel ?? ((path) => createStatusChannel(path));
 	const cleanup = dependencies.cleanup ?? cleanupOutputFiles;
 	const validate = dependencies.validate ?? validateOutputFiles;
+	const promote = dependencies.promote ?? promoteOutputFiles;
 	const logger = dependencies.logger ?? {
 		warn: () => undefined,
 		debug: () => undefined,
@@ -166,26 +173,18 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 		dependencies.sleep ??
 		((milliseconds: number) =>
 			new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-	const fileExists =
-		dependencies.fileExists ??
-		(async (path: string) => {
-			try {
-				await stat(path);
-				return true;
-			} catch {
-				return false;
-			}
-		});
 
 	return {
 		async run(plan) {
 			const startedAt = dependencies.now?.() ?? Date.now();
 			const warnings: string[] = [];
 			let outputs: PlannedOutput[] = [];
-			const preExistingOutputs = new Set<string>();
 			let connected = false;
+			let promoted = false;
+			let editorTerminationFailed = false;
 			let reason: SceneFailureReason | undefined;
 			let error: unknown;
+			let result: SceneResult;
 			try {
 				const started = await dependencies.session.start(
 					plan.editor,
@@ -241,22 +240,22 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 						frameRate: plan.config.frameRate,
 					},
 				});
-				// 失敗時 cleanup の対象を「今回の実行が新規作成したファイル」に限定する
-				// ため、計画時点で既存だった出力を記録しておく(固定ファイル名で以前の
-				// 正常な動画が同じパスに存在し得る)
-				await Promise.all(
-					outputs.map(async ({ path }) => {
-						if (await fileExists(path)) preExistingOutputs.add(path);
-					}),
-				);
+				// 録画は staging パスへ行い、検証成功時のみ最終パスへ置換する。
+				// 既存の同名出力は最後まで touch されないため、失敗した録画が
+				// 以前の正常な動画を truncate・部分上書きすることがない
+				await cleanup(
+					outputs.map(({ stagingPath }) => stagingPath),
+					false,
+				).catch((cleanupError) => logger.warn(String(cleanupError)));
 				const statusPath = join(
 					plan.sessionDir,
 					`scene-${plan.scene.sceneName}.status.json`,
 				);
 				const operationId = `${plan.scene.sceneName}-${startedAt}`;
-				// 前回実行の古い status ファイルは setup-recorder が "preparing" を
-				// 書き込む前に削除する必要があるため、チャネルはここで生成する
+				// 前回実行の古い status ファイルは、Unity 側が新しい status を書く前に
+				// 消し終えていなければならない(削除が遅れると正常な録画を取りこぼす)
 				const channel = makeStatusChannel(statusPath);
+				await channel.reset();
 				// ステージ 1: Director 検証 + preparing status + Play Mode 突入要求。
 				// Recorder 構成はドメインリロードで消えるため Play Mode 内で構築する(P-7)
 				const setup = await dependencies.pipeline.eval(
@@ -286,9 +285,9 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 							statusPath,
 							operationId,
 							directorName: scene.directorName,
-							outputs: outputs.map(({ format, path }) => ({
+							outputs: outputs.map(({ format, stagingPath }) => ({
 								format,
-								absolutePath: path,
+								absolutePath: stagingPath,
 							})),
 							width: plan.config.resolution.width,
 							height: plan.config.resolution.height,
@@ -329,7 +328,10 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					throw Object.assign(new Error(status.value.reason), {
 						failureReason: "recording-failed" as const,
 					});
-				await validate(outputs.map((output) => output.path));
+				await validate(outputs.map((output) => output.stagingPath));
+				// 検証を通過した時点で初めて最終パスへ公開する
+				await promote(outputs);
+				promoted = true;
 				const handoff: RenderHandoff = {
 					sceneName: plan.scene.sceneName,
 					videoPath: outputs[0]?.path ?? "",
@@ -359,7 +361,7 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 							failureReason: "hook-failed" as const,
 						});
 				}
-				return {
+				result = {
 					sceneName: plan.scene.sceneName,
 					outcome: "success",
 					warnings,
@@ -378,32 +380,37 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					reason ??
 					"recording-failed";
 				error = cause;
-				// hook-failed は出力検証を通過した完成動画を持つため削除しない。
-				// それ以外の失敗では、今回新規作成したファイルのみ削除する
-				const createdThisRun =
-					reason === "hook-failed"
-						? []
-						: outputs
-								.map(({ path }) => path)
-								.filter((path) => !preExistingOutputs.has(path));
-				await cleanup(createdThisRun, plan.config.debug ?? false).catch(
-					(cleanupError) => logger.warn(String(cleanupError)),
-				);
-				return failure(
+				// 削除対象は常に staging のみ。公開済み(promoted)の出力は検証を
+				// 通過した完成動画であり、後続のフック失敗でも保持する
+				await cleanup(
+					promoted ? [] : outputs.map(({ stagingPath }) => stagingPath),
+					plan.config.debug ?? false,
+				).catch((cleanupError) => logger.warn(String(cleanupError)));
+				result = failure(
 					plan,
 					reason,
 					warnings,
 					startedAt,
 					error,
-					outputs.map(({ format, path }) => ({ format, videoPath: path })),
+					promoted
+						? outputs.map(({ format, path }) => ({ format, videoPath: path }))
+						: [],
 				);
 			} finally {
 				if (connected)
-					// quit の失敗(強制終了不能など)で Scene 結果を握り潰さない
+					// Editor を終了できなかった場合、生存 Editor がポート 7800 を握り
+					// 続け package 状態を書き戻し得る。Scene 結果は保持しつつ、バッチを
+					// 中断させるためのフラグを立てる(runner が後続 Scene と復元を止める)
 					await dependencies.session
 						.quit(plan.config.timeouts?.editorQuitSec ?? 60)
-						.catch((quitError) => logger.warn(String(quitError)));
+						.catch((quitError) => {
+							editorTerminationFailed = true;
+							logger.warn(String(quitError));
+						});
 			}
+			return editorTerminationFailed
+				? { ...result, editorTerminationFailed }
+				: result;
 		},
 	};
 }

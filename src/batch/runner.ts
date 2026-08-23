@@ -98,6 +98,7 @@ export function createBatchRunner(
 		async run(plan, hooks, reporter) {
 			const results: SceneResult[] = [];
 			let restoreSucceeded = false;
+			let liveEditorAbort = false;
 
 			try {
 				for (const [index, scene] of plan.scenes.entries()) {
@@ -174,17 +175,36 @@ export function createBatchRunner(
 					}
 					results.push(result);
 					reporter?.sceneFinished(result);
+
+					if (result.editorTerminationFailed) {
+						// 生存 Editor はポート 7800 を握り、package 状態を書き戻し得る。
+						// 後続 Scene も復元も、その Editor と競合させてはならない
+						liveEditorAbort = true;
+						const remaining = plan.scenes.slice(index + 1);
+						reporter?.warn(
+							`Unity Editor を終了できなかったため、バッチを中断します。残り ${remaining.length} 件の Scene は実行しません: ${remaining.map((scene) => scene.sceneName).join(", ") || "なし"}`,
+						);
+						break;
+					}
 				}
 			} finally {
 				// Package modifications are owned by the batch session. Restore only once,
 				// after every queued Scene has had a chance to run.
-				const restored = await restore(plan.session);
-				restoreSucceeded = restored.ok;
-				reporter?.batchSummary({ scenes: results, restoreSucceeded });
-				if (!restored.ok)
+				if (liveEditorAbort) {
+					restoreSucceeded = false;
+					reporter?.batchSummary({ scenes: results, restoreSucceeded });
 					reporter?.warn(
-						`Project restoration failed: ${restored.error.message}`,
+						`生存中の Unity Editor と競合するため、パッケージ復元を行いませんでした。Editor (ポート 7800) を手動で終了してから再実行すると、未復元セッションが自動復旧されます: ${plan.session.sessionDirectory}`,
 					);
+				} else {
+					const restored = await restore(plan.session);
+					restoreSucceeded = restored.ok;
+					reporter?.batchSummary({ scenes: results, restoreSucceeded });
+					if (!restored.ok)
+						reporter?.warn(
+							`Project restoration failed: ${restored.error.message}`,
+						);
+				}
 			}
 			return { scenes: results, restoreSucceeded };
 		},

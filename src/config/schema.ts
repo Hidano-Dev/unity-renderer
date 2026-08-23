@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+	outputWildcardListText,
+	unknownOutputWildcards,
+} from "../shared/output-wildcards.js";
 import { err, ok, type Result } from "../shared/types.js";
 
 /** @impl URC-2.1 @impl URC-2.3 @impl URC-2.4 @impl URC-2.5 */
@@ -26,7 +30,17 @@ const outputSchema = z
 				(value) => !/[\\/]/u.test(value),
 				"must be a file name, not a path",
 			)
-			.refine((value) => !value.endsWith("."), "must not end with a dot"),
+			.refine((value) => !value.endsWith("."), "must not end with a dot")
+			// Editor 起動前に未知ワイルドカードを弾く(起動後の planOutputs 失敗だと
+			// manifest を一時変更した後になるため、check では検出できない)
+			.superRefine((value, context) => {
+				const unknown = unknownOutputWildcards(value);
+				if (unknown.length === 0) return;
+				context.addIssue({
+					code: "custom",
+					message: `unknown wildcard <${unknown[0]}>; supported wildcards: ${outputWildcardListText()}`,
+				});
+			}),
 	})
 	.strict();
 

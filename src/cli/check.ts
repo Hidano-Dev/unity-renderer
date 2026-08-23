@@ -1,5 +1,6 @@
 import path from "node:path";
 import { loadConfig } from "../config/load.js";
+import { checkProjectLock as checkProjectLockDefault } from "../project-guard/lock.js";
 import { recoverProject as recoverProjectDefault } from "../project-guard/recovery.js";
 import { resolveScenes as resolveScenesDefault } from "../project-guard/scene-resolver.js";
 import {
@@ -16,6 +17,7 @@ export interface CheckCommandDependencies {
 	readonly listEditors?: typeof listEditorsDefault;
 	readonly resolveScenes?: typeof resolveScenesDefault;
 	readonly recoverProject?: typeof recoverProjectDefault;
+	readonly checkProjectLock?: typeof checkProjectLockDefault;
 	readonly write?: (message: string) => void;
 }
 
@@ -59,6 +61,15 @@ export async function runCheck(
 		}
 		const config = loaded.value;
 		const projectPath = path.resolve(config.projectPath);
+		// 生存 Editor がいる状態で manifest を書き戻すと、Editor の package import と
+		// 競合する。復旧より先にロックを確認する
+		const lock = await (
+			dependencies.checkProjectLock ?? checkProjectLockDefault
+		)(projectPath);
+		if (!lock.ok) {
+			write(`Error: ${lock.error.message}`);
+			return 1;
+		}
 		const recovered = await (
 			dependencies.recoverProject ?? recoverProjectDefault
 		)(projectPath);

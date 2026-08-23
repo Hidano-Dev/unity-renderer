@@ -6,6 +6,7 @@ import {
 	cleanupOutputFiles,
 	expandOutputFileName,
 	planOutputs,
+	promoteOutputFiles,
 	validateOutputFiles,
 } from "../../src/batch/output.js";
 
@@ -129,6 +130,78 @@ describe("output wildcard expansion", () => {
 			join(directory, "render_Intro.avi.mp4"),
 			join(directory, "render_Intro.avi.mov"),
 		]);
+	});
+});
+
+describe("staging and promotion", () => {
+	it("plans a staging path per format and never reuses the final path", async () => {
+		const directory = await temporaryDirectory();
+
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>",
+			formats: ["mp4", "mov-prores"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+
+		expect(outputs).toEqual([
+			{
+				format: "mp4",
+				path: join(directory, "render_Intro.mp4"),
+				stagingPath: join(directory, "render_Intro.urc-partial.mp4"),
+			},
+			{
+				format: "mov-prores",
+				path: join(directory, "render_Intro.mov"),
+				stagingPath: join(directory, "render_Intro.urc-partial.mov"),
+			},
+		]);
+	});
+
+	it("promotes staging files over an existing output only on success", async () => {
+		const directory = await temporaryDirectory();
+		const final = join(directory, "render_Intro.mp4");
+		await writeFile(final, "previous good take");
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>",
+			formats: ["mp4"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+		await writeFile(outputs[0]?.stagingPath ?? "", "new take");
+
+		// 失敗した録画を模擬: staging を消しても既存の完成動画は残る
+		await cleanupOutputFiles(
+			outputs.map(({ stagingPath }) => stagingPath),
+			false,
+		);
+		expect(
+			await (await import("node:fs/promises")).readFile(final, "utf8"),
+		).toBe("previous good take");
+
+		// 成功時のみ置換される
+		await writeFile(outputs[0]?.stagingPath ?? "", "new take");
+		await promoteOutputFiles(outputs);
+		expect(
+			await (await import("node:fs/promises")).readFile(final, "utf8"),
+		).toBe("new take");
+		await expect(
+			(await import("node:fs/promises")).stat(outputs[0]?.stagingPath ?? ""),
+		).rejects.toThrow();
+	});
+
+	it("ignores staging leftovers when choosing the next take", async () => {
+		const directory = await temporaryDirectory();
+		await writeFile(join(directory, "render_Intro_7.urc-partial.mp4"), "junk");
+
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>_<Take>",
+			formats: ["mp4"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+
+		expect(outputs[0]?.path).toBe(join(directory, "render_Intro_1.mp4"));
 	});
 });
 

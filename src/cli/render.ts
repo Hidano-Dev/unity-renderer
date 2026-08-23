@@ -80,6 +80,13 @@ async function preflight(
 		};
 	const config = loaded.value;
 	const projectPath = path.resolve(config.projectPath);
+	// 復旧より先にロックを見る: CLI だけがクラッシュして Editor が生存している
+	// 場合、先に manifest を書き戻すと import 中の Editor と競合し、Editor が
+	// 再生成した lock を後から潰す
+	const lock = await (dependencies.checkProjectLock ?? checkProjectLock)(
+		projectPath,
+	);
+	if (!lock.ok) return { ok: false, error: { message: lock.error.message } };
 	const recover = await (dependencies.recoverProject ?? recoverProject)(
 		projectPath,
 	);
@@ -122,10 +129,6 @@ async function preflight(
 			error: { message: `Scene resolution failed: ${details}` },
 		};
 	}
-	const lock = await (dependencies.checkProjectLock ?? checkProjectLock)(
-		projectPath,
-	);
-	if (!lock.ok) return { ok: false, error: { message: lock.error.message } };
 	return {
 		ok: true,
 		value: { config: { ...config, projectPath }, editor, scenes: scenes.value },

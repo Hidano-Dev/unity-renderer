@@ -1,21 +1,24 @@
-import { mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { OutputFormat } from "../config/schema.js";
+import {
+	assertOutputWildcards,
+	OUTPUT_WILDCARDS,
+	type OutputWildcard,
+	outputWildcardNames,
+} from "../shared/output-wildcards.js";
 
 /** @impl URC-3.1 @impl URC-3.2 @impl URC-10.3 @impl URC-10.7 */
 
-export const OUTPUT_WILDCARDS = [
-	"Scene",
-	"Take",
-	"Recorder",
-	"Resolution",
-	"Frame Rate",
-	"Date",
-	"Time",
-	"Project",
-] as const;
+export { OUTPUT_WILDCARDS, type OutputWildcard };
 
-export type OutputWildcard = (typeof OUTPUT_WILDCARDS)[number];
+/**
+ * Recorder が書き込む一時ファイルの目印。録画は必ずこの staging パスへ行い、
+ * 出力検証に成功したときだけ最終パスへ置換する。これにより、固定ファイル名で
+ * 既存の正常な動画があっても、失敗した録画がそれを truncate・部分上書き
+ * することがない(cleanup 対象は常に staging のみ)。
+ */
+const STAGING_SUFFIX = ".urc-partial";
 
 export interface OutputWildcardContext {
 	readonly project: string;
@@ -37,7 +40,10 @@ export interface OutputPlanInput {
 
 export interface PlannedOutput {
 	readonly format: OutputFormat;
+	/** 成功時に公開される最終パス */
 	readonly path: string;
+	/** Recorder が実際に書き込むパス。成功時のみ path へ置換される */
+	readonly stagingPath: string;
 }
 
 const extensions: Record<OutputFormat, string> = {
@@ -45,12 +51,7 @@ const extensions: Record<OutputFormat, string> = {
 	"mov-prores": ".mov",
 };
 
-function wildcardNames(fileName: string): string[] {
-	const names: string[] = [];
-	for (const match of fileName.matchAll(/<([^>]+)>/gu))
-		names.push(match[1] ?? "");
-	return names;
-}
+const wildcardNames = outputWildcardNames;
 
 function valueForWildcard(
 	name: OutputWildcard,
@@ -86,15 +87,7 @@ function formatTime(date: Date): string {
 	return `${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
-function assertWildcards(fileName: string): void {
-	for (const name of wildcardNames(fileName)) {
-		if (!(OUTPUT_WILDCARDS as readonly string[]).includes(name)) {
-			throw new Error(
-				`Unknown output wildcard <${name}>; supported wildcards: ${OUTPUT_WILDCARDS.map((value) => `<${value}>`).join(", ")}`,
-			);
-		}
-	}
-}
+const assertWildcards = assertOutputWildcards;
 
 export function expandOutputFileName(
 	fileName: string,
@@ -106,19 +99,23 @@ export function expandOutputFileName(
 	);
 }
 
-function outputPath(
-	directory: string,
-	fileName: string,
-	format: OutputFormat,
-): string {
+function outputStem(fileName: string): string {
 	// Recorder の OutputFile は拡張子を除去したうえでコンテナ拡張子を自動付与する。
 	// 計画パスと実出力パスを一致させるため、.mp4/.mov 以外の「拡張子風」の末尾
 	// (例: v1.2, clip.avi) は名前の一部として保持し、常にフォーマット拡張子を付ける
 	const extension = extname(fileName);
-	const stem =
-		extension && [".mp4", ".mov"].includes(extension.toLowerCase())
-			? fileName.slice(0, -extension.length)
-			: fileName;
+	return extension && [".mp4", ".mov"].includes(extension.toLowerCase())
+		? fileName.slice(0, -extension.length)
+		: fileName;
+}
+
+function outputPath(
+	directory: string,
+	fileName: string,
+	format: OutputFormat,
+	staging = false,
+): string {
+	const stem = `${outputStem(fileName)}${staging ? STAGING_SUFFIX : ""}`;
 	return join(resolve(directory), `${stem}${extensions[format]}`);
 }
 
@@ -167,13 +164,11 @@ export async function planOutputs(
 	await mkdir(resolve(input.directory), { recursive: true });
 	const take = await nextTake(input);
 	const context = { ...input.context, take };
+	const expanded = expandOutputFileName(input.fileName, context);
 	const planned = input.formats.map((format) => ({
 		format,
-		path: outputPath(
-			input.directory,
-			expandOutputFileName(input.fileName, context),
-			format,
-		),
+		path: outputPath(input.directory, expanded, format),
+		stagingPath: outputPath(input.directory, expanded, format, true),
 	}));
 	const paths = new Set<string>();
 	for (const output of planned) {
@@ -182,6 +177,18 @@ export async function planOutputs(
 		paths.add(output.path.toLowerCase());
 	}
 	return planned;
+}
+
+/**
+ * 検証済みの staging ファイルを最終パスへ原子的に置換する。ここで初めて
+ * 既存の同名出力が置き換わるため、失敗した録画が既存物を壊すことはない。
+ */
+export async function promoteOutputFiles(
+	outputs: readonly PlannedOutput[],
+): Promise<void> {
+	for (const output of outputs) {
+		await rename(output.stagingPath, output.path);
+	}
 }
 
 export async function validateOutputFiles(

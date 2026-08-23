@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { type CommonError, err, ok, type Result } from "./types.js";
 
@@ -40,3 +41,29 @@ export function resolveSessionDirectory(
 }
 
 export const resolveToolOwnedDirectory = resolveToolDirectory;
+
+/**
+ * プロジェクトの同一性キーを求める。`path.resolve` は junction / symlink /
+ * ドライブ文字の大小違いを畳み込まないため、同じプロジェクトを別名パスで
+ * 指定した 2 つの実行が別セッションとみなされ、同じ manifest を同時に
+ * 変更し得る。ロックのハッシュ、session.json の保存値、比較のすべてで
+ * この値を使う。
+ *
+ * realpath は対象が存在しない場合に失敗するため、その場合は resolve に
+ * フォールバックする(存在しないプロジェクトは後続の検査が弾く)。
+ */
+export async function canonicalProjectPath(
+	projectPath: string,
+	options: { readonly realpath?: (target: string) => Promise<string> } = {},
+): Promise<string> {
+	const resolveReal = options.realpath ?? realpath;
+	let canonical: string;
+	try {
+		canonical = await resolveReal(path.resolve(projectPath));
+	} catch {
+		canonical = path.resolve(projectPath);
+	}
+	// Windows のファイル名は大文字小文字を区別しない。ドライブ文字の大小違いは
+	// realpath でも残るため、比較キーとしては正規化する
+	return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}

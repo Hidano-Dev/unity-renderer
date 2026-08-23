@@ -13,6 +13,43 @@ const validConfig = {
 	output: { directory: "C:\\renders", fileName: "<Scene>" },
 };
 
+describe("output file name wildcards", () => {
+	it("rejects an unknown wildcard before the Editor is ever launched", () => {
+		const result = validateRenderConfig({
+			projectPath: "C:\\work\\unity-project",
+			scenes: ["Main"],
+			resolution: { width: 1920, height: 1080 },
+			frameRate: 30,
+			formats: ["mp4"],
+			output: { directory: "C:\\renders", fileName: "render_<Bogus>" },
+		});
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.issues[0]?.path).toBe("output.fileName");
+			expect(result.error.issues[0]?.message).toContain("<Bogus>");
+			expect(result.error.issues[0]?.message).toContain("<Scene>");
+		}
+	});
+
+	it("accepts every supported wildcard", () => {
+		const result = validateRenderConfig({
+			projectPath: "C:\\work\\unity-project",
+			scenes: ["Main"],
+			resolution: { width: 1920, height: 1080 },
+			frameRate: 30,
+			formats: ["mp4"],
+			output: {
+				directory: "C:\\renders",
+				fileName:
+					"<Project>_<Scene>_<Recorder>_<Take>_<Resolution>_<Frame Rate>_<Date>_<Time>",
+			},
+		});
+
+		expect(result.ok).toBe(true);
+	});
+});
+
 describe("renderConfigSchema", () => {
 	it("accepts the complete supported configuration", () => {
 		const result = validateRenderConfig({

@@ -22,6 +22,12 @@ export interface StatusChannelDependencies {
 
 export interface StatusChannel {
 	readonly statusFilePath: string;
+	/**
+	 * 過去実行の status ファイルを削除し終えるまで待つ。Unity 側が新しい status を
+	 * 書き始める前に完了していなければ、削除が遅れて正常な録画を取りこぼすため、
+	 * 呼び出し側は setup eval より前に await すること。冪等。
+	 */
+	reset(): Promise<void>;
 	poll(
 		intervalMs: number,
 		timeoutSec: number,
@@ -100,6 +106,9 @@ export function createStatusChannel(
 
 	return {
 		statusFilePath,
+		async reset() {
+			await resetPromise;
+		},
 		async poll(intervalMs, timeoutSec) {
 			if (!Number.isFinite(intervalMs) || intervalMs < 0)
 				throw new RangeError("intervalMs must be a non-negative finite number");

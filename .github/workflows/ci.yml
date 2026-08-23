@@ -14,6 +14,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # artgraph の --diff は commit range を見るため、shallow clone では
+          # PR が導入した差分が空になり gate が素通りする
+          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -38,8 +42,13 @@ jobs:
       - name: Unit and integration tests
         run: pnpm run test
 
-      - name: Artgraph gate
-        run: pnpm run artgraph:check
+      - name: Artgraph gate (pull request)
+        if: github.event_name == 'pull_request'
+        run: pnpm exec artgraph check --diff --base origin/${{ github.base_ref }} --gate
+
+      - name: Artgraph gate (push)
+        if: github.event_name != 'pull_request'
+        run: pnpm exec artgraph check --gate
 
       - name: Build single-file executable
         run: pnpm run build

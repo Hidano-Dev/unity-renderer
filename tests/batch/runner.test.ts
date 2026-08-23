@@ -121,6 +121,50 @@ describe("serial batch runner", () => {
 		]);
 	});
 
+	it("aborts the batch and skips restoration when the Editor survives", async () => {
+		const events: string[] = [];
+		const reporter = {
+			sceneStarted: vi.fn(),
+			sceneFinished: vi.fn(),
+			batchSummary: vi.fn(),
+			warn: vi.fn(),
+			debug: vi.fn(),
+		};
+		const restore = vi.fn(async () => ({
+			ok: true as const,
+			value: undefined,
+		}));
+		const runner = createBatchRunner({
+			createSession: () => ({
+				state: "terminated" as const,
+				start: vi.fn(),
+				quit: vi.fn(),
+				kill: vi.fn(),
+			}),
+			createPipeline: () => ({ eval: vi.fn() }),
+			createSceneJob: () => ({
+				run: vi.fn(async (jobPlan) => {
+					events.push(`run:${jobPlan.scene.sceneName}`);
+					return {
+						...result(jobPlan.scene.sceneName, "success"),
+						editorTerminationFailed: jobPlan.scene.sceneName === "Intro",
+					};
+				}),
+			}),
+			restore,
+		});
+
+		const batch = await runner.run(plan, undefined, reporter);
+
+		// 生存 Editor と競合させないため、後続 Scene も復元も実行しない
+		expect(events).toEqual(["run:Intro"]);
+		expect(restore).not.toHaveBeenCalled();
+		expect(batch.restoreSucceeded).toBe(false);
+		expect(reporter.warn.mock.calls.flat().join("\n")).toContain(
+			"Middle, Outro",
+		);
+	});
+
 	it("reports a restoration failure after all Scenes finish", async () => {
 		const reporter = {
 			sceneStarted: vi.fn(),

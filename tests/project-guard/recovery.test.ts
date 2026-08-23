@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { beginProjectSession } from "../../src/project-guard/backup.js";
+import {
+	beginProjectSession,
+	projectIdentityKey,
+} from "../../src/project-guard/backup.js";
 import {
 	detectStaleSessions,
 	recoverStaleSessions,
@@ -143,6 +146,26 @@ describe("project recovery", () => {
 		expect(second.ok).toBe(false);
 	});
 
+	it("treats alias paths of one project as the same session", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		// 同じプロジェクトをドライブ文字の大小違い等の別名で指定したケース
+		const alias =
+			process.platform === "win32"
+				? root.charAt(0).toLowerCase() === root.charAt(0)
+					? root.charAt(0).toUpperCase() + root.slice(1)
+					: root.charAt(0).toLowerCase() + root.slice(1)
+				: root;
+		expect((await beginProjectSession(root, { sessionRoot })).ok).toBe(true);
+
+		// 別名でも同一プロジェクトと判定し、二重に manifest を触らせない
+		const viaAlias = await beginProjectSession(alias, { sessionRoot });
+		expect(viaAlias.ok).toBe(false);
+	});
+
 	it("serializes simultaneous session starts so exactly one wins", async () => {
 		const root = await project();
 		const sessionRoot = await mkdtemp(
@@ -165,8 +188,9 @@ describe("project recovery", () => {
 		temporaryDirectories.push(sessionRoot);
 		const { createHash } = await import("node:crypto");
 		const { utimes } = await import("node:fs/promises");
+		// ロック名は別名パスを畳み込んだ同一性キーから導出される
 		const hash = createHash("sha256")
-			.update(path.resolve(root))
+			.update(await projectIdentityKey(root))
 			.digest("hex")
 			.slice(0, 12);
 		const lockPath = path.join(sessionRoot, `${hash}.begin.lock`);

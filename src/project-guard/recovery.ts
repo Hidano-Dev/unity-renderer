@@ -5,9 +5,13 @@ import path from "node:path";
 import { resolveSessionDirectory } from "../shared/paths.js";
 import { err, ok, type Result } from "../shared/types.js";
 import {
+	acquireBeginLock,
 	type BackupSession,
 	type GuardError,
+	projectIdentityKey,
 	readBackupSession,
+	releaseBeginLock,
+	sessionMatchesProject,
 	writeBackupSession,
 } from "./backup.js";
 
@@ -113,21 +117,42 @@ export async function detectStaleSessions(
 	return sessions;
 }
 
+/**
+ * クラッシュ残骸の復元を、新規セッション開始と同じプロジェクトロックの下で
+ * 直列化する。ロックがないと、同時起動した 2 つの CLI が同じ stale session を
+ * 復元し、先行プロセスが開始した新セッションの manifest を後発プロセスが
+ * 古いバックアップで上書きし得る(稼働中 render から Recorder / Pipeline
+ * パッケージが消える)。
+ */
 export async function recoverStaleSessions(
 	projectPath: string,
 	options: RecoveryOptions = {},
 ): Promise<Result<readonly BackupSession[], GuardError>> {
-	const sessions = (await detectStaleSessions(options)).filter(
-		(session) =>
-			path.resolve(session.projectPath) === path.resolve(projectPath),
-	);
-	const recovered: BackupSession[] = [];
-	for (const session of sessions) {
-		const result = await restoreSession(session);
-		if (!result.ok) return result;
-		recovered.push(session);
+	const rootResult =
+		options.sessionRoot === undefined
+			? resolveSessionDirectory()
+			: ok(options.sessionRoot);
+	if (!rootResult.ok)
+		// セッションディレクトリを解決できない環境では復旧対象も存在しない
+		return ok([]);
+	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+	const projectKey = await projectIdentityKey(projectPath);
+	const lock = await acquireBeginLock(rootResult.value, projectKey, isAlive);
+	if (!lock.ok) return lock;
+	try {
+		const sessions = (await detectStaleSessions(options)).filter((session) =>
+			sessionMatchesProject(session, projectKey),
+		);
+		const recovered: BackupSession[] = [];
+		for (const session of sessions) {
+			const result = await restoreSession(session);
+			if (!result.ok) return result;
+			recovered.push(session);
+		}
+		return ok(recovered);
+	} finally {
+		await releaseBeginLock(lock.value);
 	}
-	return ok(recovered);
 }
 
 export async function recoverProject(

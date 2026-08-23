@@ -13,7 +13,10 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { resolveSessionDirectory } from "../shared/paths.js";
+import {
+	canonicalProjectPath,
+	resolveSessionDirectory,
+} from "../shared/paths.js";
 import { err, ok, type Result } from "../shared/types.js";
 import { type AddedPackage, patchManifest } from "./manifest-patch.js";
 
@@ -33,7 +36,30 @@ export interface BackupSession {
 	readonly addedPackages: readonly AddedPackage[];
 	/** セッションを所有する CLI プロセス。生存中は稼働中でありクラッシュ残骸ではない */
 	readonly ownerPid?: number;
+	/**
+	 * 別名パス(junction / symlink / ドライブ文字の大小)を畳み込んだ同一性キー。
+	 * セッションの突き合わせと排他はこの値で行う。
+	 */
+	readonly projectKey?: string;
 }
+
+/** 別名パスを同じセッションとして扱うための比較キー。 */
+export async function projectIdentityKey(projectPath: string): Promise<string> {
+	return canonicalProjectPath(projectPath);
+}
+
+function sessionMatchesProject(
+	session: BackupSession,
+	projectKey: string,
+): boolean {
+	// projectKey を持たない旧セッションは resolve 済みパスで突き合わせる
+	return session.projectKey === undefined
+		? path.resolve(session.projectPath).toLowerCase() ===
+				projectKey.toLowerCase()
+		: session.projectKey === projectKey;
+}
+
+export { sessionMatchesProject };
 export interface GuardError {
 	readonly kind:
 		| "backup-failed"
@@ -112,15 +138,12 @@ export async function readBackupSession(
 		await readFile(path.join(sessionDirectory, "session.json"), "utf8"),
 	) as BackupSession;
 }
-function projectHashOf(projectPath: string): string {
-	return createHash("sha256")
-		.update(path.resolve(projectPath))
-		.digest("hex")
-		.slice(0, 12);
+function projectHashOf(projectKey: string): string {
+	return createHash("sha256").update(projectKey).digest("hex").slice(0, 12);
 }
 
-function sessionDirectoryName(projectPath: string, now: Date): string {
-	return `${projectHashOf(projectPath)}-${now.toISOString().replace(/[-:.TZ]/g, "")}`;
+function sessionDirectoryName(projectKey: string, now: Date): string {
+	return `${projectHashOf(projectKey)}-${now.toISOString().replace(/[-:.TZ]/g, "")}`;
 }
 
 /**
@@ -141,14 +164,14 @@ const STALE_BEGIN_LOCK_AGE_MS = 30_000;
  * 理論的競合窓は残る(ファイルロックの原理的限界)が、成立には「残骸の存在 +
  * 二重起動 + サブミリ秒の交錯」の重なりが必要で、運用上許容する。
  */
-async function acquireBeginLock(
+export async function acquireBeginLock(
 	sessionRoot: string,
-	projectPath: string,
+	projectKey: string,
 	isAlive: (pid: number) => boolean,
 ): Promise<Result<string, GuardError>> {
 	const lockPath = path.join(
 		sessionRoot,
-		`${projectHashOf(projectPath)}.begin.lock`,
+		`${projectHashOf(projectKey)}.begin.lock`,
 	);
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const temporaryPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
@@ -212,7 +235,7 @@ async function acquireBeginLock(
  * 奪取が起きるのは誤認経路のみで、link 公開によりその経路は閉じているが、
  * 解放側でも防衛する。
  */
-async function releaseBeginLock(lockPath: string): Promise<void> {
+export async function releaseBeginLock(lockPath: string): Promise<void> {
 	try {
 		const parsed = JSON.parse(await readFile(lockPath, "utf8")) as {
 			pid?: number;
@@ -233,9 +256,10 @@ export async function beginBackupSession(
 			: ok(options.sessionRoot);
 	if (!rootResult.ok) return failure("io-error", rootResult.error.message);
 	const now = options.now ?? (() => new Date());
+	const projectKey = await projectIdentityKey(projectPath);
 	const sessionDirectory = path.join(
 		rootResult.value,
-		sessionDirectoryName(projectPath, now()),
+		sessionDirectoryName(projectKey, now()),
 	);
 	const files: BackupFile[] = [];
 	try {
@@ -287,6 +311,7 @@ export async function beginBackupSession(
 			files,
 			addedPackages: [],
 			ownerPid: options.ownerPid ?? process.pid,
+			projectKey,
 		};
 		await writeBackupSession(session);
 		return ok(session);
@@ -319,7 +344,11 @@ export async function beginProjectSession(
 		);
 	}
 	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
-	const lock = await acquireBeginLock(sessionRoot, projectPath, isAlive);
+	const lock = await acquireBeginLock(
+		sessionRoot,
+		await projectIdentityKey(projectPath),
+		isAlive,
+	);
 	if (!lock.ok) return lock;
 	try {
 		const activeSessions = await findActiveSessions(projectPath, sessionRoot);
@@ -372,7 +401,7 @@ export async function findActiveSessions(
 	} catch {
 		return [];
 	}
-	const resolvedProject = path.resolve(projectPath);
+	const projectKey = await projectIdentityKey(projectPath);
 	const sessions: BackupSession[] = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -382,7 +411,7 @@ export async function findActiveSessions(
 			);
 			if (
 				session.status === "active" &&
-				path.resolve(session.projectPath) === resolvedProject
+				sessionMatchesProject(session, projectKey)
 			)
 				sessions.push(session);
 		} catch {

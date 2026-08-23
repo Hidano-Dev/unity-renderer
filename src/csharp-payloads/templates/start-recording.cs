@@ -43,6 +43,14 @@ if (string.IsNullOrEmpty(statusDirectory))
     throw new System.ArgumentException("statusPath must include a directory");
 System.IO.Directory.CreateDirectory(statusDirectory);
 
+// 冪等化: transport error は「Unity が payload を実行していないこと」を保証しない。
+// StartRecording まで進んだ後に応答だけ失われた場合、CLI の再送で 2 つ目の
+// RecorderController が同じ出力パスへ並走し動画を破損させる。SessionState は
+// ドメインリロードを跨いで生き残るため、operationId の実行済み判定に使う。
+const string StartedOperationKey = "unity-render-core.startedOperationId";
+if (UnityEditor.SessionState.GetString(StartedOperationKey, "") == operationId)
+    return "{\"recordingStarted\":true,\"alreadyStarted\":true}";
+
 void WriteStatus(string bodyJson)
 {
     // File.Move(src, dst, overwrite) is unavailable in Unity's C# profile; use the
@@ -140,11 +148,20 @@ directorObject.Play();
 
 UnityEngine.Rendering.AsyncGPUReadback.WaitAllRequests();
 var controller = new UnityEditor.Recorder.RecorderController(controllerSettings);
-controller.PrepareRecording();
-if (!controller.StartRecording())
+// 開始を先に claim し、失敗経路では取り消す。応答が失われても claim は残るため
+// 再送は上のガードで弾かれ、二重録画が起きない
+UnityEditor.SessionState.SetString(StartedOperationKey, operationId);
+try
 {
-    WriteStatus(StatusJson("failed", ",\"reason\":\"RecorderController.StartRecording returned false\""));
-    throw new System.InvalidOperationException("RecorderController.StartRecording returned false");
+    controller.PrepareRecording();
+    if (!controller.StartRecording())
+        throw new System.InvalidOperationException("RecorderController.StartRecording returned false");
+}
+catch (System.Exception startException)
+{
+    UnityEditor.SessionState.EraseString(StartedOperationKey);
+    WriteStatus(StatusJson("failed", ",\"reason\":\"" + JsonEscape(startException.Message) + "\""));
+    throw;
 }
 
 var startedAt = UnityEditor.EditorApplication.timeSinceStartup;
