@@ -151,7 +151,7 @@
   - Files: src/audio-remux/extract/run-extract.ts, tests/audio-remux/extract/run-extract.test.ts
 
 - [ ] 5. フックオーケストレータと unity-render-core 統合を実装する
-- [ ] 5.1 フックオーケストレータと失敗の構造化を実装する
+- [x] 5.1 フックオーケストレータと失敗の構造化を実装する
   - afterRecording フック実装として、抽出 → 検証 → 計画 → 取得 → mux → 確定のフェーズ駆動を依存注入可能な形で組み立てる（Editor アクセスは抽出フェーズの eval 1 回のみ）
   - RenderHandoff から映像絶対パス（主出力 + 追加出力）・実効フレームレート・イン/アウト点を受け取り、出力（MP4 / MOV）ごとに mux を独立実行する
   - クリップ 0 件時はエラーとせず mux をスキップし、「音声トラックなし・無音の映像が最終成果物」を警告報告して正常終了する
