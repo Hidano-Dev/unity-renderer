@@ -1,4 +1,9 @@
-// Unity eval payload: build Recorder objects in memory and never register assets.
+// Unity eval payload (stage 1 of 2): prepare the recording pass.
+// The in-memory Recorder configuration is deliberately NOT built here: the domain
+// reload triggered by entering Play Mode would wipe it (spike P-7). Instead this
+// payload validates the target director, publishes the "preparing" status, and
+// requests Play Mode. start-recording.cs rebuilds the Recorder configuration
+// inside Play Mode where it survives until the recording completes.
 var parametersJson = /*__PARAMS_JSON__*/;
 
 string JsonString(string json, string key)
@@ -8,86 +13,39 @@ string JsonString(string json, string key)
         throw new System.ArgumentException("Missing required payload parameter: " + key);
     return System.Text.RegularExpressions.Regex.Unescape(match.Groups[1].Value);
 }
-string JsonNumber(string json, string key)
+string JsonEscape(string value)
 {
-    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)");
-    if (!match.Success)
-        throw new System.ArgumentException("Missing required payload parameter: " + key);
-    return match.Groups[1].Value;
-}
-string JsonBool(string json, string key)
-{
-    var match = System.Text.RegularExpressions.Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(true|false)");
-    if (!match.Success)
-        throw new System.ArgumentException("Missing required payload parameter: " + key);
-    return match.Groups[1].Value;
+    return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }
 
-// RecorderTrack/RecorderClip/MovieRecorderSettings are deliberately never registered
-// as project assets. HideFlags.DontSave keeps every object memory-only.
-var width = int.Parse(JsonNumber(parametersJson, "width"), System.Globalization.CultureInfo.InvariantCulture);
-var height = int.Parse(JsonNumber(parametersJson, "height"), System.Globalization.CultureInfo.InvariantCulture);
-var frameRate = double.Parse(JsonNumber(parametersJson, "frameRate"), System.Globalization.CultureInfo.InvariantCulture);
-var inPoint = double.Parse(JsonNumber(parametersJson, "inPoint"), System.Globalization.CultureInfo.InvariantCulture);
-var outPoint = double.Parse(JsonNumber(parametersJson, "outPoint"), System.Globalization.CultureInfo.InvariantCulture);
-
+var statusPath = JsonString(parametersJson, "statusPath");
+var operationId = JsonString(parametersJson, "operationId");
 var directorName = JsonString(parametersJson, "directorName");
+
+var statusDirectory = System.IO.Path.GetDirectoryName(statusPath);
+if (string.IsNullOrEmpty(statusDirectory))
+    throw new System.ArgumentException("statusPath must include a directory");
+System.IO.Directory.CreateDirectory(statusDirectory);
+
 var directorObject = System.Linq.Enumerable.FirstOrDefault(
     UnityEngine.Object.FindObjectsByType<UnityEngine.Playables.PlayableDirector>(
         UnityEngine.FindObjectsSortMode.None),
     director => director.name == directorName);
 if (directorObject == null)
     throw new System.ArgumentException("PlayableDirector not found: " + directorName);
-
-var timeline = directorObject.playableAsset as UnityEngine.Timeline.TimelineAsset;
-if (timeline == null)
+if (directorObject.playableAsset as UnityEngine.Timeline.TimelineAsset == null)
     throw new System.ArgumentException("PlayableDirector has no TimelineAsset: " + directorName);
-timeline.editorSettings.fps = frameRate;
 
-var track = timeline.CreateTrack<UnityEditor.Recorder.Timeline.RecorderTrack>(null, "unity-render-core Recorder");
-track.hideFlags = UnityEngine.HideFlags.DontSave;
+// Keep the timeline from free-running before start-recording.cs seeks to the
+// requested in point. This edit-mode change is memory-only: the scene is never
+// saved and quit-editor.cs exits without saving.
+directorObject.playOnAwake = false;
 
-var outputMatches = System.Text.RegularExpressions.Regex.Matches(
-    parametersJson,
-    "\\{\\s*\\\"format\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"absolutePath\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"\\s*\\}");
-if (outputMatches.Count == 0)
-    throw new System.ArgumentException("At least one recorder output is required");
+// Atomic status write: temp file then rename, so the CLI never reads partial JSON.
+var tempPath = statusPath + ".tmp";
+var preparingJson = "{\"operationId\":\"" + JsonEscape(operationId) + "\",\"state\":\"preparing\"}";
+System.IO.File.WriteAllText(tempPath, preparingJson, new System.Text.UTF8Encoding(false));
+System.IO.File.Move(tempPath, statusPath, true);
 
-foreach (System.Text.RegularExpressions.Match output in outputMatches)
-{
-    var format = output.Groups[1].Value.ToLowerInvariant();
-    var outputPath = System.Text.RegularExpressions.Regex.Unescape(output.Groups[2].Value);
-    var movie = ScriptableObject.CreateInstance<UnityEditor.Recorder.MovieRecorderSettings>();
-    movie.hideFlags = UnityEngine.HideFlags.DontSave;
-    movie.Enabled = true;
-    movie.OutputFile = outputPath;
-    movie.FrameRate = frameRate;
-    movie.CaptureAudio = false;
-    movie.ImageInputSettings = new UnityEditor.Recorder.Input.GameViewInputSettings
-    {
-        OutputWidth = width,
-        OutputHeight = height
-    };
-    if (format == "mp4")
-        movie.OutputFormat = UnityEditor.Recorder.MovieRecorderSettings.VideoRecorderOutputFormat.MP4;
-    else if (format == "mov")
-    {
-        movie.OutputFormat = UnityEditor.Recorder.MovieRecorderSettings.VideoRecorderOutputFormat.MOV;
-        movie.EncoderSettings = ScriptableObject.CreateInstance<UnityEditor.Recorder.ProResEncoderSettings>();
-        movie.EncoderSettings.hideFlags = UnityEngine.HideFlags.DontSave;
-    }
-    else
-        throw new System.ArgumentException("Unsupported recorder format: " + format);
-
-    var clip = track.CreateClip<UnityEditor.Recorder.Timeline.RecorderClip>();
-    clip.start = inPoint;
-    clip.end = outPoint;
-    var recorderClip = clip.asset as UnityEditor.Recorder.Timeline.RecorderClip;
-    recorderClip.hideFlags = UnityEngine.HideFlags.DontSave;
-    recorderClip.settings = movie;
-}
-
-// The recorder pipeline is synchronized on every setup invocation. The call is
-// intentionally outside a project asset or scene save operation.
-UnityEngine.Rendering.AsyncGPUReadback.WaitAllRequests();
-return "{\"configured\":true,\"directorName\":\"" + directorName + "\",\"inPoint\":" + inPoint.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"outPoint\":" + outPoint.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"captureAudio\":" + JsonBool("{\"captureAudio\":false}", "captureAudio") + "}";
+UnityEditor.EditorApplication.isPlaying = true;
+return "{\"playModeRequested\":true,\"directorName\":\"" + JsonEscape(directorName) + "\"}";

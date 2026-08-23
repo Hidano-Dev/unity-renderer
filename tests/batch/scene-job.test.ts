@@ -40,9 +40,11 @@ function setup(
 		state: "connected" as const,
 	};
 	const evalCalls: string[] = [];
+	const evalSources: string[] = [];
 	const pipeline = {
-		eval: vi.fn(async (payload: { id: string }) => {
+		eval: vi.fn(async (payload: { id: string; source: string }) => {
 			evalCalls.push(payload.id);
+			evalSources.push(payload.source);
 			return {
 				ok: true as const,
 				value: {
@@ -59,6 +61,7 @@ function setup(
 			value: { state: "completed" as const, timelineDurationSec: 2 },
 		})),
 	};
+	const sleep = vi.fn(async () => undefined);
 	const job = createSceneJob({
 		session,
 		pipeline,
@@ -70,8 +73,9 @@ function setup(
 		validate: vi.fn(async (paths) => paths),
 		cleanup: vi.fn(async () => undefined),
 		runHooks: vi.fn(async () => ({ ok: true as const, value: undefined })),
+		sleep,
 	});
-	return { job, session, pipeline, status, evalCalls };
+	return { job, session, pipeline, status, evalCalls, evalSources, sleep };
 }
 
 describe("one scene job", () => {
@@ -104,6 +108,95 @@ describe("one scene job", () => {
 			failureReason: "no-playable-director",
 		});
 		expect(session.quit).toHaveBeenCalledOnce();
+	});
+
+	it("retries start-recording until the Play Mode transition completes", async () => {
+		const context = setup();
+		let startAttempts = 0;
+		context.pipeline.eval.mockImplementation((async (payload: {
+			id: string;
+		}) => {
+			if (payload.id === "open-scene")
+				return {
+					ok: true as const,
+					value: {
+						returnValue: JSON.stringify({
+							directorFound: true,
+							multipleDirectorsWarning: false,
+							directorName: "Director",
+							timelineDurationSec: 2,
+							timelineFrameRate: 30,
+						}),
+					},
+				};
+			if (payload.id === "start-recording" && ++startAttempts === 1)
+				return {
+					ok: false as const,
+					error: {
+						kind: "eval-failed" as const,
+						payloadId: "start-recording",
+						message:
+							"PLAY_MODE_NOT_READY: the Play Mode transition has not completed yet",
+					},
+				};
+			return { ok: true as const, value: { returnValue: "{}" } };
+		}) as never);
+		const result = await context.job.run(plan);
+		expect(result.outcome).toBe("success");
+		expect(startAttempts).toBe(2);
+		expect(context.sleep).toHaveBeenCalledWith(2_000);
+	});
+
+	it("fails without retrying when start-recording reports a non-retriable error", async () => {
+		const context = setup();
+		let startAttempts = 0;
+		context.pipeline.eval.mockImplementation((async (payload: {
+			id: string;
+		}) => {
+			if (payload.id === "open-scene")
+				return {
+					ok: true as const,
+					value: {
+						returnValue: JSON.stringify({
+							directorFound: true,
+							multipleDirectorsWarning: false,
+							directorName: "Director",
+							timelineDurationSec: 2,
+							timelineFrameRate: 30,
+						}),
+					},
+				};
+			if (payload.id === "start-recording") {
+				startAttempts += 1;
+				return {
+					ok: false as const,
+					error: {
+						kind: "eval-failed" as const,
+						payloadId: "start-recording",
+						message: "Unsupported recorder format: webm",
+					},
+				};
+			}
+			return { ok: true as const, value: { returnValue: "{}" } };
+		}) as never);
+		const result = await context.job.run(plan);
+		expect(result).toMatchObject({
+			outcome: "failure",
+			failureReason: "recording-failed",
+		});
+		expect(startAttempts).toBe(1);
+		expect(context.session.quit).toHaveBeenCalledOnce();
+	});
+
+	it("sends the recorder configuration to the Play Mode stage payload", async () => {
+		const { job, evalCalls, evalSources } = setup();
+		await job.run(plan);
+		const startSource = evalSources[evalCalls.indexOf("start-recording")];
+		expect(startSource).toContain("mov-prores");
+		expect(startSource).toContain("Intro_1.mp4");
+		expect(startSource).toContain("1920");
+		const setupSource = evalSources[evalCalls.indexOf("setup-recorder")];
+		expect(setupSource).toContain("scene-Intro.status.json");
 	});
 
 	it("forces cleanup for a recording timeout", async () => {

@@ -5,7 +5,10 @@ import {
 	compilePayload,
 	type PayloadCompiler,
 } from "../csharp-payloads/compile.js";
-import type { PipelineClient } from "../editor-session/pipeline-client.js";
+import type {
+	EvalResult,
+	PipelineClient,
+} from "../editor-session/pipeline-client.js";
 import type { EditorSession } from "../editor-session/session.js";
 import {
 	createStatusChannel,
@@ -76,7 +79,11 @@ export interface SceneJobDependencies {
 		debug(message: string): void;
 	};
 	readonly now?: () => number;
+	readonly sleep?: (milliseconds: number) => Promise<void>;
 }
+
+/** Play Mode 遷移完了待ちで start-recording を再送する間隔 */
+const PLAY_MODE_RETRY_INTERVAL_MS = 2_000;
 
 export interface SceneJob {
 	run(plan: SceneJobPlan): Promise<SceneResult>;
@@ -153,6 +160,10 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 		warn: () => undefined,
 		debug: () => undefined,
 	};
+	const sleep =
+		dependencies.sleep ??
+		((milliseconds: number) =>
+			new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
 
 	return {
 		async run(plan) {
@@ -221,18 +232,17 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					plan.sessionDir,
 					`scene-${plan.scene.sceneName}.status.json`,
 				);
+				const operationId = `${plan.scene.sceneName}-${startedAt}`;
+				// 前回実行の古い status ファイルは setup-recorder が "preparing" を
+				// 書き込む前に削除する必要があるため、チャネルはここで生成する
+				const channel = makeStatusChannel(statusPath);
+				// ステージ 1: Director 検証 + preparing status + Play Mode 突入要求。
+				// Recorder 構成はドメインリロードで消えるため Play Mode 内で構築する(P-7)
 				const setup = await dependencies.pipeline.eval(
 					compiler.compile("setup-recorder", {
+						statusPath,
+						operationId,
 						directorName: scene.directorName,
-						outputs: outputs.map(({ format, path }) => ({
-							format,
-							absolutePath: path,
-						})),
-						width: plan.config.resolution.width,
-						height: plan.config.resolution.height,
-						frameRate: plan.config.frameRate,
-						inPoint,
-						outPoint,
 					}),
 					{
 						transport: { kind: "file" },
@@ -243,21 +253,47 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					throw Object.assign(new Error(setup.error.message), {
 						failureReason: "recorder-setup-failed" as const,
 					});
-				const recording = await dependencies.pipeline.eval(
-					compiler.compile("start-recording", {
-						statusPath,
-						operationId: `${plan.scene.sceneName}-${startedAt}`,
-					}),
-					{
-						transport: { kind: "file" },
-						timeoutSec: plan.config.timeouts?.editorStartSec ?? 600,
-					},
-				);
-				if (!recording.ok)
-					throw Object.assign(new Error(recording.error.message), {
-						failureReason: "recording-failed" as const,
-					});
-				const status = await makeStatusChannel(statusPath).poll(
+				// ステージ 2: Play Mode 遷移完了までリトライしつつ Recorder 構成 + 録画開始。
+				// PLAY_MODE_NOT_READY とトランスポート断(リロード中)のみ再送する
+				const stage2TimeoutSec = plan.config.timeouts?.editorStartSec ?? 600;
+				const stage2Deadline =
+					(dependencies.now?.() ?? Date.now()) + stage2TimeoutSec * 1_000;
+				let recording: EvalResult;
+				for (;;) {
+					recording = await dependencies.pipeline.eval(
+						compiler.compile("start-recording", {
+							statusPath,
+							operationId,
+							directorName: scene.directorName,
+							outputs: outputs.map(({ format, path }) => ({
+								format,
+								absolutePath: path,
+							})),
+							width: plan.config.resolution.width,
+							height: plan.config.resolution.height,
+							frameRate: plan.config.frameRate,
+							inPoint,
+							outPoint,
+						}),
+						{
+							transport: { kind: "file" },
+							timeoutSec: stage2TimeoutSec,
+						},
+					);
+					if (recording.ok) break;
+					const retriable =
+						recording.error.kind === "eval-transport-failed" ||
+						recording.error.message.includes("PLAY_MODE_NOT_READY");
+					if (
+						!retriable ||
+						(dependencies.now?.() ?? Date.now()) >= stage2Deadline
+					)
+						throw Object.assign(new Error(recording.error.message), {
+							failureReason: "recording-failed" as const,
+						});
+					await sleep(PLAY_MODE_RETRY_INTERVAL_MS);
+				}
+				const status = await channel.poll(
 					250,
 					resolveRecordingTimeoutSec(plan.config, outPoint - inPoint),
 				);

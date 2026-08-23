@@ -3,64 +3,34 @@ import { compilePayload } from "../../src/csharp-payloads/compile.js";
 
 /** @test URC-9.1 @test URC-9.2 @test URC-9.3 @test URC-9.4 @test URC-9.5 @test URC-9.6 */
 
-describe("setup-recorder payload", () => {
-	it("emits the approved in-memory dual-format recorder configuration", () => {
+describe("setup-recorder payload (stage 1: prepare and enter Play Mode)", () => {
+	it("validates the director, publishes preparing status, and requests Play Mode", () => {
 		const source = compilePayload("setup-recorder", {
+			statusPath: "C:\\sessions\\one\\scene-Intro.status.json",
+			operationId: "Intro-1700000000000",
 			directorName: "TimelineDirector",
-			outputs: [
-				{ format: "mp4", absolutePath: "C:\\renders\\scene.mp4" },
-				{ format: "mov", absolutePath: "C:\\renders\\scene.mov" },
-			],
-			width: 1920,
-			height: 1080,
-			frameRate: 30,
-			inPoint: 1.5,
-			outPoint: 4.5,
 		}).source;
 
-		expect(source).toContain(
-			"CreateTrack<UnityEditor.Recorder.Timeline.RecorderTrack>",
-		);
-		expect(source).toContain(
-			"CreateClip<UnityEditor.Recorder.Timeline.RecorderClip>",
-		);
-		expect(source).toContain(
-			"ScriptableObject.CreateInstance<UnityEditor.Recorder.MovieRecorderSettings>()",
-		);
-		expect(source).toContain("HideFlags.DontSave");
-		expect(source).toContain(
-			"MovieRecorderSettings.VideoRecorderOutputFormat.MP4",
-		);
-		expect(source).toContain("ProResEncoderSettings");
-		expect(source).toContain("CaptureAudio = false");
-		expect(source).toContain("AsyncGPUReadback.WaitAllRequests()");
-		expect(source).toContain("clip.start = inPoint");
-		expect(source).toContain("clip.end = outPoint");
-		expect(source).toContain("timeline.editorSettings.fps = frameRate");
+		expect(source).toContain("PlayableDirector");
+		expect(source).toContain("playOnAwake = false");
+		expect(source).toContain('\\"state\\":\\"preparing\\"');
+		expect(source).toContain("File.Move(tempPath, statusPath, true)");
+		expect(source).toContain("EditorApplication.isPlaying = true");
+		// Recorder 構成はドメインリロードで消えるため、ステージ 1 では構築しない(P-7)
+		expect(source).not.toContain("RecorderController");
+		expect(source).not.toContain("MovieRecorderSettings");
+		expect(source).not.toContain("CreateTrack");
 		expect(source).not.toContain("CreateAsset");
 	});
 
-	it("injects output paths and recorder settings through JSON", () => {
-		const source = compilePayload("setup-recorder", {
-			outputs: [{ format: "mp4", absolutePath: 'C:\\動画\\take "1".mp4' }],
-			width: 1280,
-			height: 720,
-			frameRate: 24,
-			inPoint: 0,
-			outPoint: 10,
-		}).source;
+	it("injects parameters through JSON without assembling C# from strings", () => {
+		const params = {
+			statusPath: 'C:\\セッション\\take "1".status.json',
+			operationId: "scene-01-run-1",
+			directorName: "Director",
+		};
+		const source = compilePayload("setup-recorder", params).source;
 
-		expect(source).toContain(
-			JSON.stringify(
-				JSON.stringify({
-					outputs: [{ format: "mp4", absolutePath: 'C:\\動画\\take "1".mp4' }],
-					width: 1280,
-					height: 720,
-					frameRate: 24,
-					inPoint: 0,
-					outPoint: 10,
-				}),
-			),
-		);
+		expect(source).toContain(JSON.stringify(JSON.stringify(params)));
 	});
 });

@@ -1,22 +1,86 @@
 import { describe, expect, it } from "vitest";
 import { compilePayload } from "../../src/csharp-payloads/compile.js";
 
-/** @test URC-10.1 @test URC-10.2 @test URC-10.4 @test URC-10.5 @test URC-10.7 @test URC-11.1 */
+/** @test URC-9.1 @test URC-9.2 @test URC-9.3 @test URC-9.4 @test URC-9.5 @test URC-9.6 @test URC-10.1 @test URC-10.2 @test URC-10.4 @test URC-10.5 @test URC-10.7 @test URC-11.1 */
 
-describe("start-recording payload", () => {
-	it("starts Play Mode recording and reports progress through an atomic status file", () => {
-		const source = compilePayload("start-recording", {
-			statusPath: "C:\\renders\\status.json",
-			operationId: "scene-01-run-1",
-		}).source;
+const params = {
+	statusPath: "C:\\sessions\\one\\scene-Intro.status.json",
+	operationId: "Intro-1700000000000",
+	directorName: "TimelineDirector",
+	outputs: [
+		{ format: "mp4", absolutePath: "C:\\renders\\scene.mp4" },
+		{ format: "mov-prores", absolutePath: "C:\\renders\\scene.mov" },
+	],
+	width: 1920,
+	height: 1080,
+	frameRate: 30,
+	inPoint: 1.5,
+	outPoint: 4.5,
+};
+
+describe("start-recording payload (stage 2: rebuild in Play Mode and record)", () => {
+	it("guards on Play Mode and rebuilds the in-memory recorder configuration", () => {
+		const source = compilePayload("start-recording", params).source;
 
 		expect(source).toMatchSnapshot();
-		expect(source).toContain("EditorApplication.isPlaying = true");
+		// Play Mode 遷移前は副作用なしで失敗し、CLI 側のリトライに委ねる
+		expect(source).toContain("PLAY_MODE_NOT_READY");
+		expect(source).toContain(
+			"new UnityEditor.Recorder.RecorderController(controllerSettings)",
+		);
+		expect(source).toContain(
+			"CreateInstance<UnityEditor.Recorder.RecorderControllerSettings>()",
+		);
+		expect(source).toContain(
+			"CreateInstance<UnityEditor.Recorder.MovieRecorderSettings>()",
+		);
+		expect(source).toContain("HideFlags.DontSave");
+		expect(source).toContain(
+			"SetRecordModeToFrameInterval(0, totalFrames - 1)",
+		);
+		expect(source).toContain("CapFrameRate = true");
+		expect(source).toContain(
+			"UnityEditor.Recorder.Encoder.CoreEncoderSettings",
+		);
+		expect(source).toContain(
+			"UnityEditor.Recorder.Encoder.ProResEncoderSettings",
+		);
+		expect(source).toContain("CaptureAudio = false");
+		expect(source).toContain("GameViewInputSettings");
+		expect(source).toContain("AsyncGPUReadback.WaitAllRequests()");
 		expect(source).toContain("controller.PrepareRecording()");
 		expect(source).toContain("controller.StartRecording()");
+		// OutputFile は拡張子を自動付与するため、拡張子なしパスを設定する
+		expect(source).toContain("GetFileNameWithoutExtension(outputPath)");
+		expect(source).not.toContain("CreateAsset");
+	});
+
+	it("reports progress through an atomic status file per the RecordingStatus contract", () => {
+		const source = compilePayload("start-recording", params).source;
+
 		expect(source).toContain("EditorApplication.update");
 		expect(source).toContain("File.Move(tempPath, statusPath, true)");
-		expect(source).toContain('WriteStatus("completed", 1, null)');
-		expect(source).toContain('WriteStatus("failed", 0, exception.Message)');
+		expect(source).toContain('\\"elapsedSec\\":');
+		expect(source).toContain('StatusJson("recording"');
+		expect(source).toContain('StatusJson("completed"');
+		expect(source).toContain('\\"timelineDurationSec\\":');
+		expect(source).toContain('StatusJson("failed"');
+		expect(source).toContain('\\"reason\\":');
+	});
+
+	it("injects recorder parameters through JSON", () => {
+		const source = compilePayload("start-recording", {
+			...params,
+			outputs: [{ format: "mp4", absolutePath: 'C:\\動画\\take "1".mp4' }],
+		}).source;
+
+		expect(source).toContain(
+			JSON.stringify(
+				JSON.stringify({
+					...params,
+					outputs: [{ format: "mp4", absolutePath: 'C:\\動画\\take "1".mp4' }],
+				}),
+			),
+		);
 	});
 });
