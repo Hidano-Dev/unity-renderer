@@ -142,7 +142,7 @@
   - _Depends: 4.1_
   - Files: src/audio-remux/extract/templates/extract-audio.cs, src/audio-remux/extract/payload.ts, tests/audio-remux/extract/payload.test.ts
 
-- [ ] 4.3 抽出実行サービス（TS 側）を実装する
+- [x] 4.3 抽出実行サービス（TS 側）を実装する
   - 前提: core の `HookContext.evalCSharp`（core task 8.2）が実装済みであること
   - eval 実行による抽出 C# の送信と、書き込み完了判定（eval 応答成功 + JSON ファイル存在）を実装する
   - 抽出 eval のタイムアウト（スパイク実測で調整した値）と、失敗分類（eval 失敗 / タイムアウト / 出力欠落 / ペイロード報告失敗）を CLI 側へ返すエラーとして実装する
