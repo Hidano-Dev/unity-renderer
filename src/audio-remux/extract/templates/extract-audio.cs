@@ -86,11 +86,17 @@ bool IsAudioExtension(string path)
         extension == ".m4a" || extension == ".aac";
 }
 
-var scenePath = ExtractJsonString(parametersJson, "scenePath");
 var metadataFilePath = ExtractJsonString(parametersJson, "metadataFilePath");
 var sceneName = ExtractJsonString(parametersJson, "sceneName");
-var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(
-    scenePath, UnityEditor.SceneManagement.OpenSceneMode.Single);
+
+// The hook runs after recording, inside the same Editor session that already
+// opened and recorded this scene. Re-opening it would be a project state
+// change (the payload must stay read-only, requirement 8.4) and would discard
+// the very scene core just recorded, so operate on the ACTIVE scene - the same
+// choice core's setup-recorder.cs / start-recording.cs make.
+var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+if (scene.name != sceneName)
+    return "{\"ok\":false,\"error\":\"Active scene is " + EscapeJson(scene.name) + " but " + EscapeJson(sceneName) + " was expected\"}";
 
 UnityEngine.Playables.PlayableDirector rootDirector = null;
 foreach (var root in scene.GetRootGameObjects())
@@ -253,7 +259,8 @@ for (var i = 0; i < errors.Count; i++)
     var parts = errors[i].Split(new[] { '|' }, 3);
     output.Append("{\"kind\":"); AppendJsonString(output, parts[0]);
     output.Append(",\"clipId\":"); AppendJsonString(output, parts[1]);
-    output.Append(",\"detail\":"); AppendJsonString(output, parts[2]).Append("}");
+    // AppendJsonString is a local function returning void, so it cannot be chained.
+    output.Append(",\"detail\":"); AppendJsonString(output, parts[2]); output.Append("}");
 }
 output.Append("],\"warnings\":[");
 for (var i = 0; i < warnings.Count; i++)
@@ -267,7 +274,7 @@ for (var i = 0; i < warnings.Count; i++)
     if (space > 0) clipId = detail.Substring(0, space);
     output.Append("{\"kind\":"); AppendJsonString(output, kind);
     output.Append(",\"clipId\":"); AppendJsonString(output, clipId);
-    output.Append(",\"detail\":"); AppendJsonString(output, detail).Append("}");
+    output.Append(",\"detail\":"); AppendJsonString(output, detail); output.Append("}");
 }
 output.Append("]}");
 

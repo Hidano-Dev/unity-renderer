@@ -12,7 +12,19 @@ function number(value: number): string {
 	return value.toString();
 }
 
-function clipChain(clip: PlacedClip, pitchMode: PitchMode): string {
+/**
+ * 音声クリップが占める最初の ffmpeg 入力インデックス。mux コマンドは
+ * `-i <video>` を先頭に置き `-map 0:v:0` で映像を拾うため、音声入力は 1 番から
+ * 始まる。ここを 0 にすると `[0:a]` が映像入力を指し
+ * "Stream specifier ':a' ... matches no streams" で mux ごと失敗する。
+ */
+export const MUX_AUDIO_INPUT_OFFSET = 1;
+
+function clipChain(
+	clip: PlacedClip,
+	pitchMode: PitchMode,
+	inputIndexOffset: number,
+): string {
 	const steps = [
 		`atrim=start=${number(clip.sourceTrimStartSec)}:end=${number(clip.sourceTrimEndSec)}`,
 		"asetpts=N/SR/TB",
@@ -33,12 +45,13 @@ function clipChain(clip: PlacedClip, pitchMode: PitchMode): string {
 	if (clip.gain !== 1) steps.push(`volume=${number(clip.gain)}`);
 	if (clip.delaySamples > 0) steps.push(`adelay=${clip.delaySamples}S:all=1`);
 
-	return `[${clip.inputIndex}:a]${steps.join(",")}[a${clip.inputIndex}]`;
+	return `[${clip.inputIndex + inputIndexOffset}:a]${steps.join(",")}[a${clip.inputIndex}]`;
 }
 
 export function buildFilterGraph(
 	plan: MixPlan,
 	pitchMode: PitchMode = "resample",
+	inputIndexOffset: number = MUX_AUDIO_INPUT_OFFSET,
 ): FilterGraph {
 	const inputArgs: string[] = [];
 	const chains: string[] = [];
@@ -47,7 +60,7 @@ export function buildFilterGraph(
 	for (const clip of plan.clips) {
 		if (clip.loop) inputArgs.push("-stream_loop", "-1");
 		inputArgs.push("-i", clip.sourcePath);
-		chains.push(clipChain(clip, pitchMode));
+		chains.push(clipChain(clip, pitchMode, inputIndexOffset));
 		labels.push(`[a${clip.inputIndex}]`);
 	}
 

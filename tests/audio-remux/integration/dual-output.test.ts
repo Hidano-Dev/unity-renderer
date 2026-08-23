@@ -35,7 +35,7 @@ describe("audio remux dual-output integration", () => {
 		]);
 		await writeFile(
 			script,
-			"const fs=require('node:fs'); const a=process.argv.slice(2); const out=a.at(-1); fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify(a)+'\\n'); if(out.endsWith('.mov.audiotmp')) { process.exit(9); } fs.writeFileSync(out,'muxed-mp4');",
+			"const fs=require('node:fs'); const a=process.argv.slice(2); const out=a.at(-1); fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify(a)+'\\n'); if(out.endsWith('.mov.audiotmp.mov')) { process.exit(9); } fs.writeFileSync(out,'muxed-mp4');",
 		);
 		const metadataPath = join(sessionDir, "timeline-audio-metadata.json");
 		await mkdir(sessionDir, { recursive: true });

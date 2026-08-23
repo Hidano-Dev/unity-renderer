@@ -83,14 +83,17 @@ export async function loadAudioTimelineMetadata(
 	if (!validated.ok) return err(validated.error);
 
 	if (validated.value.errors.length > 0) {
+		// Carry each reported error through with its clip id and detail. A single
+		// generic issue here leaves the user with no way to tell which clip or
+		// source file was at fault (10.1).
 		return err({
 			kind: "extraction-errors",
-			issues: [
+			issues: validated.value.errors.map((entry, index) =>
 				issue(
-					"errors",
-					"metadata contains extraction errors; audio mixing is aborted",
+					`errors[${index}]`,
+					`${entry.kind}: ${entry.detail} (clip ${entry.clipId})`,
 				),
-			],
+			),
 		});
 	}
 

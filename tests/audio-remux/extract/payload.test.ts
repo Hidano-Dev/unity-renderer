@@ -2,17 +2,21 @@ import { describe, expect, it } from "vitest";
 import { compileAudioExtractionPayload } from "../../../src/audio-remux/extract/payload.js";
 
 describe("audio extraction payload", () => {
-	it("injects the scene and metadata paths into the eval payload", () => {
+	it("injects the scene name and metadata path into the eval payload", () => {
 		const result = compileAudioExtractionPayload({
-			scenePath: "Assets/Scenes/Main.unity",
 			metadataFilePath: "C:\\session\\timeline-audio-metadata.json",
 			sceneName: "Main",
 		});
 
-		expect(result.source).toContain(
-			'"scenePath\\":\\"Assets/Scenes/Main.unity',
-		);
+		expect(result.source).toContain('"sceneName\\":\\"Main');
 		expect(result.source).toContain("metadataFilePath");
+		// The payload must read the ACTIVE scene, never re-open one: the hook runs
+		// in the session that already recorded it, and re-opening would mutate
+		// project state (requirement 8.4).
+		expect(result.source).toContain(
+			"UnityEngine.SceneManagement.SceneManager.GetActiveScene()",
+		);
+		expect(result.source).not.toContain("OpenScene");
 		expect(result.source).not.toContain("/*__PARAMS_JSON__*/");
 		expect(result.source).toContain("TimelineAsset");
 		expect(result.source).toContain("GetOutputTracks()");

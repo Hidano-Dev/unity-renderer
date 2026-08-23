@@ -80,7 +80,7 @@
   - _Depends: 2.1, 2.2_
   - Files: src/audio-remux/planner/mix-plan.ts, tests/audio-remux/planner/mix-plan.test.ts
 
-- [ ] 3. ffmpeg の取得・filter graph・実行・成果物確定を実装する
+- [x] 3. ffmpeg の取得・filter graph・実行・成果物確定を実装する
 - [x] 3.1 (P) ピン止めマニフェストと ffmpeg 取得マネージャを実装する
   - スパイク Q-8 で確定した buildId・URL・SHA-256・ライセンス情報をコード内定数（マニフェスト）として保持する
   - 取得フロー（一時ファイルへ DL → SHA-256 検証 → staging 展開 → smoke → buildId ディレクトリへ atomic rename → install-info.json 記録）と、ロックファイルによる取得の直列化・ロック残骸の PID 生存確認を実装する
@@ -122,7 +122,7 @@
   - _Boundary: output/finalize_
   - Files: src/audio-remux/output/finalize.ts, tests/audio-remux/output/finalize.test.ts
 
-- [ ] 4. 音声情報抽出 C# ペイロードと抽出実行サービスを実装する
+- [x] 4. 音声情報抽出 C# ペイロードと抽出実行サービスを実装する
 - [x] 4.1 core 側共有ユーティリティの公開（パラメータ注入・ツール管理ディレクトリ）を実装する
   - 前提: core の `csharp-payloads`（core task 6.1）と `shared/paths`（core task 3.1）が実装済みであること
   - core のプレースホルダ注入ロジックを汎用関数として export する（core の閉じた PayloadId union は変更しない）
@@ -150,7 +150,7 @@
   - _Requirements: 2.4, 2.5, 8.2, 8.4, 10.2_
   - Files: src/audio-remux/extract/run-extract.ts, tests/audio-remux/extract/run-extract.test.ts
 
-- [ ] 5. フックオーケストレータと unity-render-core 統合を実装する
+- [x] 5. フックオーケストレータと unity-render-core 統合を実装する
 - [x] 5.1 フックオーケストレータと失敗の構造化を実装する
   - afterRecording フック実装として、抽出 → 検証 → 計画 → 取得 → mux → 確定のフェーズ駆動を依存注入可能な形で組み立てる（Editor アクセスは抽出フェーズの eval 1 回のみ）
   - RenderHandoff から映像絶対パス（主出力 + 追加出力）・実効フレームレート・イン/アウト点を受け取り、出力（MP4 / MOV）ごとに mux を独立実行する
@@ -177,8 +177,8 @@
   - _Requirements: 8.1, 8.6, 10.5, 10.6_
   - Files: src/cli/index.ts, tests/audio-remux/integration/core-reporting.test.ts
 
-- [ ] 6. 実 Unity + 実 ffmpeg での E2E 検証を実施する
-- [ ] 6.1 同期精度 E2E（クリックトラック・複合ケース）を実施する
+- [x] 6. 実 Unity + 実 ffmpeg での E2E 検証を実施する
+- [x] 6.1 同期精度 E2E（クリックトラック・複合ケース）を実施する
   - **判定基準（スパイク Q-10 でユーザー確定）**: 合否は **ffmpeg 出力のクリック位置が MixPlan の計算値と一致すること**で判定する。Unity Editor 実再生音との比較は参考値に留め、合否には用いない（design「Q-10 の同期精度判定基準」参照）
   - クリックトラック用テストアセット（既知位置の短音 + ネスト/変速/ループ構成）を書き出し、ffprobe でストリーム長差 ≤ 0.5 映像フレームを確認し、波形解析でクリック位置誤差を実測する
   - スパイクの資産を再利用する: フィクスチャは `spike/unity-project/Assets/Timeline/AudioSpikeRoot.playable`（必須複合ケース `A_Composite` を含む）、測定は `spike/timeline-audio/tools/analyze-wav.ps1`（オンセット / 区間 RMS / 基本周波数）、期待値は同 README の「時間換算の期待値」表
@@ -187,7 +187,7 @@
   - _Requirements: 4.1, 4.5, 4.6, 6.1, 7.2, 7.3, 7.4_
   - Files: docs/e2e-audio-checklist.md
 
-- [ ] 6.2 手動 E2E シナリオ（成否報告・欠落・オフライン復旧）を実施する
+- [x] 6.2 手動 E2E シナリオ（成否報告・欠落・オフライン復旧）を実施する
   - MP4 + MOV(ProRes) の 2 出力に対する音声合成一括実行と、最終成果物が設定どおりのファイル名で音声付きになっていることを確認する
   - 音源 1 件を意図的に欠落させ、「映像成功・音声失敗」として成否一覧に区別表示され、無音映像が保全されることを確認する
   - オフライン状態での初回実行で取得失敗メッセージ（原因切り分け + 手動配置手順）が表示され、manual 配置での復旧と 2 回目以降のオフライン動作を確認する
@@ -195,7 +195,7 @@
   - _Requirements: 5.3, 5.6, 6.2, 9.1, 9.2, 10.1, 10.5_
   - Files: docs/e2e-audio-checklist.md
 
-- [ ] 7. ユーザードキュメントを整備する
+- [x] 7. ユーザードキュメントを整備する
 - [x] 7.1 (P) ffmpeg のライセンス告知と手動配置手順を文書化する
   - 「ffmpeg は BtbN FFmpeg-Builds（LGPL ビルド）を初回実行時にユーザー環境へダウンロードする。再配布は行わない」旨・採用ビルド・取得元 URL・ソースコード入手先を明記する（スパイク Q-8 の最終確認結果に従う）
   - オフライン環境・配布元障害時の手動配置手順（取得元 URL・SHA-256・manual 配置先の絶対パス・確認方法）を記載する

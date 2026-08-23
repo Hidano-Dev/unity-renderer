@@ -64,11 +64,9 @@ async function outputExists(metadataFilePath: string): Promise<boolean> {
 export async function runAudioExtraction(
 	ctx: HookContext,
 	metadataFilePath: string,
-	scenePath = ctx.handoff.sceneName,
 ): Promise<Result<void, ExtractError>> {
 	ctx.logger.debug("[audio-remux:extract] starting audio metadata extraction");
 	const payload = compileAudioExtractionPayload({
-		scenePath,
 		metadataFilePath,
 		sceneName: ctx.handoff.sceneName,
 	});
@@ -116,7 +114,6 @@ export interface ExtractService {
 	runExtraction(
 		ctx: HookContext,
 		metadataFilePath: string,
-		scenePath?: string,
 	): Promise<Result<void, ExtractError>>;
 }
 

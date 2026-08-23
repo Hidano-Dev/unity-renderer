@@ -63,7 +63,7 @@ describe("runAudioExtraction", () => {
 		expect(result).toEqual({ ok: true, value: undefined });
 		expect(timeout).toBe(120);
 		expect(source).toContain('"metadataFilePath"');
-		expect(source).toContain('"scenePath"');
+		expect(source).toContain('"sceneName"');
 	});
 
 	it.each([

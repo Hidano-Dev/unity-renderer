@@ -106,10 +106,16 @@ describe("loadAudioTimelineMetadata", () => {
 			ok: false,
 			error: { kind: "extraction-errors" },
 		});
-		if (!result.ok)
+		// Each extraction error is carried through individually with its clip id
+		// and detail; a single generic issue would leave the operator unable to
+		// tell which clip or source file failed (10.1).
+		if (!result.ok) {
 			expect(result.error.issues.map((issue) => issue.path)).toEqual([
-				"errors",
+				"errors[0]",
 			]);
+			expect(result.error.issues[0]?.message).toContain("missing-a");
+			expect(result.error.issues[0]?.message).toContain("extract failed");
+		}
 
 		await writeFile(
 			join(directory, "timeline-audio-metadata.json"),

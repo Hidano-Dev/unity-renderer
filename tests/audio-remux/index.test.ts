@@ -106,12 +106,12 @@ describe("createAudioRemuxHooks", () => {
 		expect(deps.muxRunner.runMux).toHaveBeenCalledTimes(2);
 		expect(deps.finalizer.finalizeOutput).toHaveBeenCalledWith(
 			videoPath,
-			`${videoPath}.audiotmp`,
+			`${videoPath}.audiotmp.mp4`,
 			false,
 		);
 		expect(deps.finalizer.finalizeOutput).toHaveBeenCalledWith(
 			movPath,
-			`${movPath}.audiotmp`,
+			`${movPath}.audiotmp.mov`,
 			false,
 		);
 	});

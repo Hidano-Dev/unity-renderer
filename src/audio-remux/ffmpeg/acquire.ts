@@ -72,6 +72,66 @@ function failure(
 	return err({ kind, message, manualInstallHint: hint(manifest, manual) });
 }
 
+const NETWORK_CODES = new Set([
+	"ENOTFOUND",
+	"EAI_AGAIN",
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"ETIMEDOUT",
+	"EHOSTUNREACH",
+	"ENETUNREACH",
+	"ENETDOWN",
+	"EPROTO",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_SOCKET",
+	"UND_ERR_HEADERS_TIMEOUT",
+	"CERT_HAS_EXPIRED",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+]);
+const PERMISSION_CODES = new Set([
+	"EACCES",
+	"EPERM",
+	"EROFS",
+	"EBUSY",
+	"ENOSPC",
+	"EMFILE",
+]);
+
+/**
+ * 失敗原因を切り分ける（5.6）。fetch はオフライン・DNS・プロキシ・TLS の
+ * いずれでも `TypeError("fetch failed")` を投げ、実際の理由は `cause` 側の
+ * `code` にぶら下がる。ここで拾わないと、ネットワーク断が権限エラーとして
+ * 報告され、ユーザーが誤った対処へ誘導される。
+ */
+function classifyAcquireFailure(cause: unknown): FfmpegAcquireError["kind"] {
+	if (!(cause instanceof Error)) return "io-permission";
+	if (cause.message.includes("ZIP")) return "extract-failed";
+	if (cause.message.includes("smoke")) return "smoke-test-failed";
+
+	const codes: string[] = [];
+	let current: unknown = cause;
+	for (
+		let depth = 0;
+		current !== null && current !== undefined && depth < 5;
+		depth++
+	) {
+		const record = current as { code?: unknown; cause?: unknown };
+		if (typeof record.code === "string") codes.push(record.code);
+		current = record.cause;
+	}
+
+	if (codes.some((code) => NETWORK_CODES.has(code))) return "network";
+	if (codes.some((code) => PERMISSION_CODES.has(code))) return "io-permission";
+	if (
+		cause instanceof TypeError ||
+		/fetch failed|network|socket|proxy|tls|ssl|certificate/i.test(cause.message)
+	)
+		return "network";
+	return "io-permission";
+}
+
 async function exists(path: string): Promise<boolean> {
 	try {
 		await access(path, constants.F_OK);
@@ -307,14 +367,8 @@ export class FfmpegAcquireManager {
 				source: "managed",
 			});
 		} catch (cause) {
-			const kind =
-				cause instanceof Error && cause.message.includes("ZIP")
-					? "extract-failed"
-					: cause instanceof Error && cause.message.includes("smoke")
-						? "smoke-test-failed"
-						: "io-permission";
 			return failure(
-				kind,
+				classifyAcquireFailure(cause),
 				cause instanceof Error ? cause.message : "ffmpeg acquisition failed",
 				this.manifest,
 				manualDirectory,

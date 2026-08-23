@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
 import type { HookContext, RenderHooks } from "../hooks/registry.js";
 import {
 	createExtractService,
@@ -58,6 +58,28 @@ function detail(error: unknown): string {
 	if (typeof error === "object" && error !== null) {
 		if ("message" in error) return String(error.message);
 		if ("stderrTail" in error) return String(error.stderrTail);
+		// Metadata failures carry { kind, issues: [{ path, message }] } and have no
+		// `message`. Without this branch they stringify to "[object Object]" and the
+		// user never learns which clip or source file was at fault (10.1).
+		const record = error as { kind?: unknown; issues?: unknown };
+		if (Array.isArray(record.issues) && record.issues.length > 0) {
+			const issues = record.issues
+				.map((entry) => {
+					const { path, message } = entry as {
+						path?: unknown;
+						message?: unknown;
+					};
+					return path ? `${String(path)}: ${String(message)}` : String(message);
+				})
+				.join("; ");
+			return record.kind ? `${String(record.kind)} (${issues})` : issues;
+		}
+		if (record.kind !== undefined) return String(record.kind);
+		try {
+			return JSON.stringify(error);
+		} catch {
+			return String(error);
+		}
 	}
 	return String(error);
 }
@@ -129,7 +151,10 @@ async function runAfterRecording(
 		{ format: "mp4" as const, videoPath: ctx.handoff.videoPath },
 		...ctx.handoff.additionalOutputs,
 	]) {
-		const outputTmpPath = `${output.videoPath}.audiotmp`;
+		// ffmpeg infers the output container from the file extension, so the temp
+		// name must keep it. A bare ".audiotmp" suffix makes ffmpeg fail with
+		// "Unable to choose an output format" before it writes anything.
+		const outputTmpPath = `${output.videoPath}.audiotmp${parse(output.videoPath).ext}`;
 		const muxed = await deps.muxRunner.runMux({
 			ffmpegPath: ffmpeg.value.ffmpegPath,
 			videoPath: output.videoPath,

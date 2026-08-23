@@ -140,7 +140,10 @@ describe("audio remux integration hook flow", () => {
 		expect(args).toContain("-c:v");
 		expect(args).toContain("copy");
 		expect(args).toContain("-filter_complex_script");
-		expect(args.at(-1)).toBe(`${test.videoPath}.audiotmp`);
+		// The temp name keeps the container extension so ffmpeg can pick a muxer.
+		expect(args.at(-1)).toBe(
+			`${test.videoPath}.audiotmp${test.videoPath.slice(test.videoPath.lastIndexOf("."))}`,
+		);
 	});
 
 	it("keeps the silent video and avoids ffmpeg when the real plan has zero clips", async () => {

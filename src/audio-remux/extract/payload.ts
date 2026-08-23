@@ -5,9 +5,12 @@ import extractAudioTemplate from "./templates/extract-audio.cs" with {
 };
 
 export interface AudioExtractionPayloadParams {
-	readonly scenePath: string;
-	readonly metadataFilePath: string;
+	/**
+	 * 抽出対象として期待する Scene 名。ペイロードは Scene を開き直さず
+	 * アクティブ Scene を読むため、これは取り違え防止の照合にのみ使う。
+	 */
 	readonly sceneName: string;
+	readonly metadataFilePath: string;
 }
 
 export interface AudioExtractionPayload {
