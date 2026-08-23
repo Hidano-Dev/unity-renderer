@@ -81,7 +81,7 @@
   - Files: src/audio-remux/planner/mix-plan.ts, tests/audio-remux/planner/mix-plan.test.ts
 
 - [ ] 3. ffmpeg の取得・filter graph・実行・成果物確定を実装する
-- [ ] 3.1 (P) ピン止めマニフェストと ffmpeg 取得マネージャを実装する
+- [x] 3.1 (P) ピン止めマニフェストと ffmpeg 取得マネージャを実装する
   - スパイク Q-8 で確定した buildId・URL・SHA-256・ライセンス情報をコード内定数（マニフェスト）として保持する
   - 取得フロー（一時ファイルへ DL → SHA-256 検証 → staging 展開 → smoke → buildId ディレクトリへ atomic rename → install-info.json 記録）と、ロックファイルによる取得の直列化・ロック残骸の PID 生存確認を実装する
   - 取得済み時のオフライン動作、破損検出時の削除 + 再ダウンロード 1 回、手動配置エスケープハッチ（manual ディレクトリの警告付き最優先使用）を実装する
