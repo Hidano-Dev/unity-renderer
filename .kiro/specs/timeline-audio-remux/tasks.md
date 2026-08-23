@@ -132,7 +132,7 @@
   - _Requirements: 5.7, 8.2_
   - Files: src/csharp-payloads/compile.ts, src/shared/paths.ts, tests/csharp-payloads/compile.test.ts, tests/shared/paths.test.ts
 
-- [ ] 4.2 音声情報抽出 C# ペイロードを実装する
+- [x] 4.2 音声情報抽出 C# ペイロードを実装する
   - スパイク Q-1〜Q-6 で確定した API 経路に従い、ルート TimelineAsset からの AudioTrack 走査、ControlTrack の子 Timeline 再帰（多段ネスト・解決不能クリップの warning スキップ）を実装する
   - 各クリップの属性抽出（元ファイル絶対パス・clipIn・クリップ音量・再生速度・トラック音量/ミュート・ループ・音源長）と、祖先 ControlClip の累積によるルート基準絶対開始時刻・実効再生速度への換算（時間正規化ステップ 1–2・可視窓クランプ）を実装する
   - サブアセット等ファイル実体を持たない参照の error 記録、Scene 内 AudioSource を走査対象に含めない構造的保証（走査起点を TimelineAsset のトラック列挙に限定）を実装する
