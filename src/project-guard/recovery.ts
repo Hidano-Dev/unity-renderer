@@ -14,6 +14,17 @@ import {
 /** @impl URC-6.3 @impl URC-6.4 @impl URC-6.5 */
 export interface RecoveryOptions {
 	readonly sessionRoot?: string;
+	readonly isProcessAlive?: (pid: number) => boolean;
+}
+
+function defaultIsProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (cause) {
+		// EPERM はプロセスが存在するがシグナル送信権限が無い場合
+		return (cause as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
 async function atomicRestore(source: string, target: string): Promise<void> {
@@ -79,6 +90,7 @@ export async function detectStaleSessions(
 	} catch {
 		return [];
 	}
+	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
 	const sessions: BackupSession[] = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -86,7 +98,14 @@ export async function detectStaleSessions(
 			const session = await readBackupSession(
 				path.join(rootResult.value, entry.name),
 			);
-			if (session.status === "active") sessions.push(session);
+			if (session.status !== "active") continue;
+			// 所有プロセスが生存している active セッションは実行中であり、
+			// クラッシュ残骸ではない(復旧すると稼働中の CLI の状態を破壊する)
+			const ownedByLiveProcess =
+				session.ownerPid !== undefined &&
+				session.ownerPid !== process.pid &&
+				isAlive(session.ownerPid);
+			if (!ownedByLiveProcess) sessions.push(session);
 		} catch {
 			// A partial metadata file cannot safely identify a project and is left untouched.
 		}

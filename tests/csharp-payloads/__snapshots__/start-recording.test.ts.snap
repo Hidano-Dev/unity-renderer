@@ -62,14 +62,22 @@ string StatusJson(string state, string extraFields)
     return "{\\"operationId\\":\\"" + JsonEscape(operationId) + "\\",\\"state\\":\\"" + state + "\\"" + extraFields + "}";
 }
 
-var directorObject = System.Linq.Enumerable.FirstOrDefault(
-    UnityEngine.Object.FindObjectsByType<UnityEngine.Playables.PlayableDirector>(
-        UnityEngine.FindObjectsSortMode.None),
-    director => director.name == directorName);
+// open-scene.cs / setup-recorder.cs と同じ「アクティブシーンの root を順に走査」で
+// 選択を再現し、同名の入れ子 Director や順序不定の誤選択を防ぐ
+UnityEngine.Playables.PlayableDirector directorObject = null;
+foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+{
+    var candidate = root.GetComponent<UnityEngine.Playables.PlayableDirector>();
+    if (candidate != null && candidate.name == directorName)
+    {
+        directorObject = candidate;
+        break;
+    }
+}
 if (directorObject == null)
 {
-    WriteStatus(StatusJson("failed", ",\\"reason\\":\\"PlayableDirector not found in Play Mode: " + JsonEscape(directorName) + "\\""));
-    throw new System.ArgumentException("PlayableDirector not found in Play Mode: " + directorName);
+    WriteStatus(StatusJson("failed", ",\\"reason\\":\\"Root PlayableDirector not found in Play Mode: " + JsonEscape(directorName) + "\\""));
+    throw new System.ArgumentException("Root PlayableDirector not found in Play Mode: " + directorName);
 }
 
 // RecorderControllerSettings.FrameRate + CapFrameRate lock game time to the

@@ -25,6 +25,9 @@ describe("start-recording payload (stage 2: rebuild in Play Mode and record)", (
 		expect(source).toMatchSnapshot();
 		// Play Mode 遷移前は副作用なしで失敗し、CLI 側のリトライに委ねる
 		expect(source).toContain("PLAY_MODE_NOT_READY");
+		// open-scene と同じ root 走査で Director を再選択する(入れ子・順序不定対策)
+		expect(source).toContain("GetActiveScene().GetRootGameObjects()");
+		expect(source).not.toContain("FindObjectsByType");
 		expect(source).toContain(
 			"new UnityEditor.Recorder.RecorderController(controllerSettings)",
 		);

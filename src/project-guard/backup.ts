@@ -29,6 +29,8 @@ export interface BackupSession {
 	readonly sessionDirectory: string;
 	readonly files: readonly BackupFile[];
 	readonly addedPackages: readonly AddedPackage[];
+	/** セッションを所有する CLI プロセス。生存中は稼働中でありクラッシュ残骸ではない */
+	readonly ownerPid?: number;
 }
 export interface GuardError {
 	readonly kind:
@@ -43,6 +45,7 @@ export interface GuardError {
 export interface BackupOptions {
 	readonly sessionRoot?: string;
 	readonly now?: () => Date;
+	readonly ownerPid?: number;
 }
 const manifestFiles = [
 	{
@@ -167,6 +170,7 @@ export async function beginBackupSession(
 			sessionDirectory,
 			files,
 			addedPackages: [],
+			ownerPid: options.ownerPid ?? process.pid,
 		};
 		await writeBackupSession(session);
 		return ok(session);

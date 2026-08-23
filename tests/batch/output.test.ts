@@ -100,6 +100,20 @@ describe("output wildcard expansion", () => {
 		).resolves.toEqual([]);
 	});
 
+	it("numbers every <Take> wildcard consistently", async () => {
+		const directory = await temporaryDirectory();
+		await writeFile(join(directory, "2_2.mp4"), "old");
+
+		const outputs = await planOutputs({
+			directory,
+			fileName: "<Take>_<Take>",
+			formats: ["mp4"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+
+		expect(outputs[0]?.path).toBe(join(directory, "3_3.mp4"));
+	});
+
 	it("keeps unknown extensions as part of the name and appends the format extension", async () => {
 		const directory = await temporaryDirectory();
 

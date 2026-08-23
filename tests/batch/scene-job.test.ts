@@ -62,6 +62,9 @@ function setup(
 		})),
 	};
 	const sleep = vi.fn(async () => undefined);
+	const cleanup = vi.fn(async () => undefined);
+	const runHooks = vi.fn(async () => ({ ok: true as const, value: undefined }));
+	const fileExists = vi.fn(async () => false);
 	const job = createSceneJob({
 		session,
 		pipeline,
@@ -71,11 +74,23 @@ function setup(
 			{ format: "mov-prores" as const, path: "C:\\renders\\Intro_1.mov" },
 		]),
 		validate: vi.fn(async (paths) => paths),
-		cleanup: vi.fn(async () => undefined),
-		runHooks: vi.fn(async () => ({ ok: true as const, value: undefined })),
+		cleanup,
+		runHooks,
 		sleep,
+		fileExists,
 	});
-	return { job, session, pipeline, status, evalCalls, evalSources, sleep };
+	return {
+		job,
+		session,
+		pipeline,
+		status,
+		evalCalls,
+		evalSources,
+		sleep,
+		cleanup,
+		runHooks,
+		fileExists,
+	};
 }
 
 describe("one scene job", () => {
@@ -208,5 +223,37 @@ describe("one scene job", () => {
 		const result = await context.job.run(plan);
 		expect(result.failureReason).toBe("recording-timeout");
 		expect(context.session.quit).toHaveBeenCalledOnce();
+	});
+
+	it("deletes only the files this run created, keeping pre-existing outputs", async () => {
+		const context = setup();
+		// 固定ファイル名で mp4 は前回実行の正常な動画が既に存在するケース
+		context.fileExists.mockImplementation(
+			(async (path: string) => path === "C:\\renders\\Intro_1.mp4") as never,
+		);
+		context.status.poll.mockResolvedValue({
+			ok: false as const,
+			error: { kind: "recording-timeout" as const, message: "timeout" },
+		} as never);
+		const result = await context.job.run(plan);
+		expect(result.outcome).toBe("failure");
+		expect(context.cleanup).toHaveBeenCalledWith(
+			["C:\\renders\\Intro_1.mov"],
+			false,
+		);
+	});
+
+	it("keeps validated outputs when the post-recording hook fails", async () => {
+		const context = setup();
+		context.runHooks.mockResolvedValue({
+			ok: false as const,
+			error: { message: "hook exploded" },
+		} as never);
+		const result = await context.job.run(plan);
+		expect(result).toMatchObject({
+			outcome: "failure",
+			failureReason: "hook-failed",
+		});
+		expect(context.cleanup).toHaveBeenCalledWith([], false);
 	});
 });

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { loadConfig } from "../config/load.js";
+import { recoverProject as recoverProjectDefault } from "../project-guard/recovery.js";
 import { resolveScenes as resolveScenesDefault } from "../project-guard/scene-resolver.js";
 import {
 	type EditorInstall,
@@ -14,6 +15,7 @@ export interface CheckCommandDependencies {
 	readonly readProjectVersion?: typeof readProjectVersionDefault;
 	readonly listEditors?: typeof listEditorsDefault;
 	readonly resolveScenes?: typeof resolveScenesDefault;
+	readonly recoverProject?: typeof recoverProjectDefault;
 	readonly write?: (message: string) => void;
 }
 
@@ -35,7 +37,11 @@ function sceneErrorMessage(error: {
 		.join("; ");
 }
 
-/** Run only the non-mutating preflight checks. The Editor is never started. */
+/**
+ * Run the non-mutating preflight checks. The Editor is never started.
+ * 唯一の例外としてクラッシュ復旧だけは実行する(design: project-guard 契約 6.4。
+ * ユーザーの原状回復を最優先するため、check の「プロジェクト無変更」原則の例外)。
+ */
 export async function runCheck(
 	configPath: string,
 	dependencies: CheckCommandDependencies = {},
@@ -53,6 +59,17 @@ export async function runCheck(
 		}
 		const config = loaded.value;
 		const projectPath = path.resolve(config.projectPath);
+		const recovered = await (
+			dependencies.recoverProject ?? recoverProjectDefault
+		)(projectPath);
+		if (!recovered.ok) {
+			write(`Error: ${recovered.error.message}`);
+			return 1;
+		}
+		if (recovered.value.length > 0)
+			write(
+				`前回実行の未復元セッションを検出し、manifest を復元しました (${recovered.value.length} 件)`,
+			);
 		const cli = await (dependencies.detectUnityCli ?? detectUnityCliDefault)();
 		if (!cli.ok) {
 			write(`Error: ${cli.error.message}`);

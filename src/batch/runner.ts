@@ -168,7 +168,8 @@ export function createBatchRunner(
 					} catch (cause) {
 						await session
 							.quit(plan.config.timeouts?.editorQuitSec ?? 60)
-							.catch(() => session.kill());
+							.catch(() => session.kill())
+							.catch((killError) => reporter?.warn(String(killError)));
 						result = unexpectedSceneFailure(scene, cause);
 					}
 					results.push(result);

@@ -75,6 +75,40 @@ describe("project recovery", () => {
 		).rejects.toThrow();
 	});
 
+	it("does not treat a session owned by a live process as stale", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		const started = await beginProjectSession(root, {
+			sessionRoot,
+			ownerPid: 99999,
+		});
+		expect(started.ok).toBe(true);
+
+		// 所有プロセス生存中 → 実行中セッションであり復旧対象にしない
+		expect(
+			await detectStaleSessions({ sessionRoot, isProcessAlive: () => true }),
+		).toHaveLength(0);
+		const guarded = await recoverStaleSessions(root, {
+			sessionRoot,
+			isProcessAlive: () => true,
+		});
+		expect(guarded).toMatchObject({ ok: true, value: [] });
+
+		// 所有プロセス消滅後 → クラッシュ残骸として復旧する
+		expect(
+			await detectStaleSessions({ sessionRoot, isProcessAlive: () => false }),
+		).toHaveLength(1);
+		const recovered = await recoverStaleSessions(root, {
+			sessionRoot,
+			isProcessAlive: () => false,
+		});
+		expect(recovered.ok).toBe(true);
+		if (recovered.ok) expect(recovered.value).toHaveLength(1);
+	});
+
 	it("rejects a second session while the first is active", async () => {
 		const root = await project();
 		const sessionRoot = await mkdtemp(

@@ -138,7 +138,7 @@ async function nextTake(input: OutputPlanInput): Promise<number> {
 		? input.fileName.slice(0, -configuredExtension.length)
 		: input.fileName;
 	const pattern = expandOutputFileName(
-		fileNameTemplate.replace("<Take>", marker),
+		fileNameTemplate.replaceAll("<Take>", marker),
 		{ ...input.context, take: 1 },
 	);
 	const escaped = pattern
@@ -149,7 +149,11 @@ async function nextTake(input: OutputPlanInput): Promise<number> {
 	let maximum = 0;
 	for (const file of files) {
 		const match = matcher.exec(file);
-		if (match) maximum = Math.max(maximum, Number(match[1]));
+		if (match)
+			maximum = Math.max(
+				maximum,
+				...match.slice(1).map((take) => Number(take)),
+			);
 	}
 	return maximum + 1;
 }

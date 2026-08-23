@@ -85,6 +85,10 @@ async function preflight(
 	);
 	if (!recover.ok)
 		return { ok: false, error: { message: recover.error.message } };
+	if (recover.value.length > 0)
+		dependencies.write?.(
+			`前回実行の未復元セッションを検出し、manifest を復元しました (${recover.value.length} 件)`,
+		);
 	const cli = await (dependencies.detectUnityCli ?? detectUnityCli)();
 	if (!cli.ok) return { ok: false, error: { message: cli.error.message } };
 	const version = await (dependencies.readProjectVersion ?? readProjectVersion)(
@@ -137,7 +141,7 @@ export async function runRender(
 		((message: string) => process.stderr.write(`${message}\n`));
 	let plan: Awaited<ReturnType<typeof preflight>>;
 	try {
-		plan = await preflight(configPath, dependencies);
+		plan = await preflight(configPath, { ...dependencies, write });
 	} catch (cause) {
 		return fail(messageOf(cause), write);
 	}

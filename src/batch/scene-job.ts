@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveRecordingTimeoutSec } from "../config/load.js";
 import type { OutputFormat, RenderConfig } from "../config/schema.js";
@@ -80,6 +81,7 @@ export interface SceneJobDependencies {
 	};
 	readonly now?: () => number;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
+	readonly fileExists?: (path: string) => Promise<boolean>;
 }
 
 /** Play Mode 遷移完了待ちで start-recording を再送する間隔 */
@@ -164,12 +166,23 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 		dependencies.sleep ??
 		((milliseconds: number) =>
 			new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+	const fileExists =
+		dependencies.fileExists ??
+		(async (path: string) => {
+			try {
+				await stat(path);
+				return true;
+			} catch {
+				return false;
+			}
+		});
 
 	return {
 		async run(plan) {
 			const startedAt = dependencies.now?.() ?? Date.now();
 			const warnings: string[] = [];
 			let outputs: PlannedOutput[] = [];
+			const preExistingOutputs = new Set<string>();
 			let connected = false;
 			let reason: SceneFailureReason | undefined;
 			let error: unknown;
@@ -228,6 +241,14 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 						frameRate: plan.config.frameRate,
 					},
 				});
+				// 失敗時 cleanup の対象を「今回の実行が新規作成したファイル」に限定する
+				// ため、計画時点で既存だった出力を記録しておく(固定ファイル名で以前の
+				// 正常な動画が同じパスに存在し得る)
+				await Promise.all(
+					outputs.map(async ({ path }) => {
+						if (await fileExists(path)) preExistingOutputs.add(path);
+					}),
+				);
 				const statusPath = join(
 					plan.sessionDir,
 					`scene-${plan.scene.sceneName}.status.json`,
@@ -357,10 +378,17 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					reason ??
 					"recording-failed";
 				error = cause;
-				await cleanup(
-					outputs.map(({ path }) => path),
-					plan.config.debug ?? false,
-				).catch((cleanupError) => logger.warn(String(cleanupError)));
+				// hook-failed は出力検証を通過した完成動画を持つため削除しない。
+				// それ以外の失敗では、今回新規作成したファイルのみ削除する
+				const createdThisRun =
+					reason === "hook-failed"
+						? []
+						: outputs
+								.map(({ path }) => path)
+								.filter((path) => !preExistingOutputs.has(path));
+				await cleanup(createdThisRun, plan.config.debug ?? false).catch(
+					(cleanupError) => logger.warn(String(cleanupError)),
+				);
 				return failure(
 					plan,
 					reason,
@@ -371,9 +399,10 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 				);
 			} finally {
 				if (connected)
-					await dependencies.session.quit(
-						plan.config.timeouts?.editorQuitSec ?? 60,
-					);
+					// quit の失敗(強制終了不能など)で Scene 結果を握り潰さない
+					await dependencies.session
+						.quit(plan.config.timeouts?.editorQuitSec ?? 60)
+						.catch((quitError) => logger.warn(String(quitError)));
 			}
 		},
 	};

@@ -64,6 +64,93 @@ describe("check command", () => {
 		}
 	});
 
+	it("recovers a stale session before the checks (the only mutation check performs)", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "unity-check-"));
+		try {
+			await mkdir(path.join(root, "ProjectSettings"), { recursive: true });
+			await writeFile(
+				path.join(root, "ProjectSettings", "ProjectVersion.txt"),
+				"m_EditorVersion: 6000.0.36f1\n",
+			);
+			const configPath = path.join(root, "config.json");
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					projectPath: root,
+					scenes: ["Main"],
+					resolution: { width: 1, height: 1 },
+					frameRate: 1,
+					formats: ["mp4"],
+					output: { directory: root, fileName: "render" },
+				}),
+			);
+			const recovered: string[] = [];
+			const write: string[] = [];
+			const dependencies: CheckCommandDependencies = {
+				recoverProject: (async (projectPath: string) => {
+					recovered.push(projectPath);
+					return {
+						ok: true,
+						value: [{ sessionDirectory: "stale" }],
+					};
+				}) as never,
+				detectUnityCli: async () => ({
+					ok: true,
+					value: { cliVersion: "1.0.0" },
+				}),
+				listEditors: async () => ({
+					ok: true,
+					value: [
+						{
+							version: { raw: "6000.0.36f1", major: 6000 },
+							executablePath: "Unity.exe",
+						},
+					],
+				}),
+				resolveScenes: async () => ({
+					ok: true,
+					value: [{ sceneName: "Main", assetPath: "Assets/Main.unity" }],
+				}),
+				write: (message) => write.push(message),
+			};
+			expect(await runCheck(configPath, dependencies)).toBe(0);
+			expect(recovered).toEqual([root]);
+			expect(write.join("\n")).toContain("復元しました");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails when stale-session recovery cannot restore the project", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "unity-check-"));
+		try {
+			const configPath = path.join(root, "config.json");
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					projectPath: root,
+					scenes: ["Main"],
+					resolution: { width: 1, height: 1 },
+					frameRate: 1,
+					formats: ["mp4"],
+					output: { directory: root, fileName: "render" },
+				}),
+			);
+			const write: string[] = [];
+			const dependencies: CheckCommandDependencies = {
+				recoverProject: (async () => ({
+					ok: false,
+					error: { kind: "restore-failed", message: "restore blew up" },
+				})) as never,
+				write: (message) => write.push(message),
+			};
+			expect(await runCheck(configPath, dependencies)).toBe(1);
+			expect(write.join("\n")).toContain("restore blew up");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reports missing scenes and does not continue to Editor checks", async () => {
 		const root = await mkdtemp(path.join(tmpdir(), "unity-check-"));
 		await mkdir(path.join(root, "ProjectSettings"), { recursive: true });

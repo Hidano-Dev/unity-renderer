@@ -104,6 +104,23 @@ describe("EditorSession", () => {
 		expect(session.state).toBe("terminated");
 	});
 
+	it("does not report terminated when the force-kill fails and the process survives", async () => {
+		const deps = dependencies({
+			requestQuit: vi.fn(async () => undefined),
+			isProcessAlive: vi.fn(async () => true),
+			killProcess: vi.fn(async () => {
+				throw new Error("access denied");
+			}),
+			pollIntervalMs: 1,
+			resolvePidByPort: vi.fn(async () => undefined),
+		});
+		const session = createEditorSession(deps);
+		await session.start(editor, "C:\\projects\\demo", 2);
+
+		await expect(session.quit(0.001)).rejects.toThrow(/強制終了に失敗/);
+		expect(session.state).not.toBe("terminated");
+	});
+
 	it("force-kills the Editor when graceful quit is blocked", async () => {
 		const deps = dependencies({
 			requestQuit: vi.fn(async () => undefined),

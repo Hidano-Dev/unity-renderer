@@ -12,6 +12,9 @@ describe("setup-recorder payload (stage 1: prepare and enter Play Mode)", () => 
 		}).source;
 
 		expect(source).toContain("PlayableDirector");
+		// open-scene と同じ root 走査で Director を再選択する(入れ子・順序不定対策)
+		expect(source).toContain("GetActiveScene().GetRootGameObjects()");
+		expect(source).not.toContain("FindObjectsByType");
 		expect(source).toContain("playOnAwake = false");
 		expect(source).toContain('\\"state\\":\\"preparing\\"');
 		expect(source).toContain("File.Replace(tempPath, statusPath, null)");

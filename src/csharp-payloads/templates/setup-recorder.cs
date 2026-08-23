@@ -27,12 +27,21 @@ if (string.IsNullOrEmpty(statusDirectory))
     throw new System.ArgumentException("statusPath must include a directory");
 System.IO.Directory.CreateDirectory(statusDirectory);
 
-var directorObject = System.Linq.Enumerable.FirstOrDefault(
-    UnityEngine.Object.FindObjectsByType<UnityEngine.Playables.PlayableDirector>(
-        UnityEngine.FindObjectsSortMode.None),
-    director => director.name == directorName);
+// open-scene.cs と同じ「アクティブシーンの root を順に走査」で選択を再現する。
+// シーン全体検索は入れ子の Director も順序不定で拾い、同名の別 Timeline を
+// 選んでしまう可能性がある
+UnityEngine.Playables.PlayableDirector directorObject = null;
+foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+{
+    var candidate = root.GetComponent<UnityEngine.Playables.PlayableDirector>();
+    if (candidate != null && candidate.name == directorName)
+    {
+        directorObject = candidate;
+        break;
+    }
+}
 if (directorObject == null)
-    throw new System.ArgumentException("PlayableDirector not found: " + directorName);
+    throw new System.ArgumentException("Root PlayableDirector not found: " + directorName);
 if (directorObject.playableAsset as UnityEngine.Timeline.TimelineAsset == null)
     throw new System.ArgumentException("PlayableDirector has no TimelineAsset: " + directorName);
 

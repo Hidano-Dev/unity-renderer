@@ -9,7 +9,7 @@ string ExtractJsonString(string json, string key)
 }
 string EscapeJson(string value)
 {
-    return value.Replace("\\", "\\\\").Replace("\\\"", "\\\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+    return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
 }
 var scenePath = ExtractJsonString(parametersJson, "scenePath");
 var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath, UnityEditor.SceneManagement.OpenSceneMode.Single);

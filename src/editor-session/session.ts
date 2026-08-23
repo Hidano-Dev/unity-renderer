@@ -132,8 +132,17 @@ export function createEditorSession(
 		killPromise = (async () => {
 			try {
 				await killProcess(processId);
-			} catch {
-				// A process that already exited is the desired terminal state.
+			} catch (cause) {
+				// A process that already exited is the desired terminal state, but a
+				// kill failure (access denied, transient OS error) must not be treated
+				// as terminated: the Editor would keep port 7800 and corrupt the next
+				// Scene. Verify liveness before deciding.
+				if (await isProcessAlive(processId)) {
+					killPromise = undefined;
+					throw new Error(
+						`Unity Editor (PID ${processId}) の強制終了に失敗しました。プロセスを手動で終了してください: ${cause instanceof Error ? cause.message : String(cause)}`,
+					);
+				}
 			}
 			pid = undefined;
 			currentState = "terminated";
@@ -198,10 +207,13 @@ export function createEditorSession(
 				);
 			}
 
-			await kill();
+			let killNote = "";
+			await kill().catch((cause) => {
+				killNote = ` さらに ${cause instanceof Error ? cause.message : String(cause)}`;
+			});
 			return err({
 				kind: "connect-timeout",
-				message: `Unity Editor への接続が ${timeoutSec} 秒以内に確立できませんでした。Editor.log を確認してください。`,
+				message: `Unity Editor への接続が ${timeoutSec} 秒以内に確立できませんでした。Editor.log を確認してください。${killNote}`,
 			});
 		},
 		async quit(timeoutSec) {
