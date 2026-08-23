@@ -176,6 +176,10 @@ void MonitorRecording()
     {
         if (controller.IsRecording())
         {
+            // Requirement 9.5: 書き出し中は常に同期化を有効にする。開始前の 1 回では
+            // 以降のキャプチャフレームが発行する readback を待てず、フレーム欠落を
+            // 防げないため、録画中は毎フレーム完了を待つ
+            UnityEngine.Rendering.AsyncGPUReadback.WaitAllRequests();
             var elapsedSec = UnityEditor.EditorApplication.timeSinceStartup - startedAt;
             // Throttle to one atomic write per 250 ms; the CLI polls at the same cadence.
             var bucket = (long)(elapsedSec * 4);

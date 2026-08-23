@@ -72,6 +72,27 @@ describe("EditorSession", () => {
 		expect(session.state).toBe("terminated");
 	});
 
+	it("flags a failed kill on the connection timeout path", async () => {
+		const deps = dependencies({
+			isReachable: vi.fn(async () => false),
+			isProcessAlive: vi.fn(async () => true),
+			killProcess: vi.fn(async () => {
+				throw new Error("access denied");
+			}),
+			pollIntervalMs: 1,
+		});
+		const session = createEditorSession(deps);
+
+		const result = await session.start(editor, "C:\\projects\\demo", 0.001);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.kind).toBe("connect-timeout");
+			// 生存 Editor をバッチへ伝えないと、後続 Scene と復元が競合する
+			expect(result.error.terminationFailed).toBe(true);
+		}
+	});
+
 	it("makes kill idempotent", async () => {
 		const deps = dependencies();
 		const session = createEditorSession(deps);

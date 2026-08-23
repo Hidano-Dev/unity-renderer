@@ -146,6 +146,41 @@ describe("project recovery", () => {
 		expect(second.ok).toBe(false);
 	});
 
+	it("recovers on a first run where the session root does not exist yet", async () => {
+		const root = await project();
+		const parent = await mkdtemp(path.join(os.tmpdir(), "urc-recovery-fresh-"));
+		temporaryDirectories.push(parent);
+		// 初回実行を模擬: sessions ディレクトリがまだ無い
+		const sessionRoot = path.join(parent, "sessions");
+
+		const recovered = await recoverStaleSessions(root, { sessionRoot });
+
+		expect(recovered).toMatchObject({ ok: true, value: [] });
+	});
+
+	it("restores the manifest when the session start fails after patching", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		const manifest = path.join(root, "Packages", "manifest.json");
+		const before = await readFile(manifest, "utf8");
+
+		const failed = await beginProjectSession(root, {
+			sessionRoot,
+			writeSession: async () => {
+				throw new Error("disk full");
+			},
+		});
+
+		expect(failed.ok).toBe(false);
+		// 一時パッケージを含む manifest がプロジェクトに残っていないこと
+		expect(await readFile(manifest, "utf8")).toBe(before);
+		// 次回実行を妨げる active セッションも残らない
+		expect(await detectStaleSessions({ sessionRoot })).toHaveLength(0);
+	});
+
 	it("treats alias paths of one project as the same session", async () => {
 		const root = await project();
 		const sessionRoot = await mkdtemp(

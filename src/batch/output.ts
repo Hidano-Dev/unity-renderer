@@ -1,4 +1,5 @@
-import { mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { OutputFormat } from "../config/schema.js";
 import {
@@ -180,15 +181,40 @@ export async function planOutputs(
 }
 
 /**
- * 検証済みの staging ファイルを最終パスへ原子的に置換する。ここで初めて
- * 既存の同名出力が置き換わるため、失敗した録画が既存物を壊すことはない。
+ * 検証済みの staging ファイルを最終パスへ公開する。ここで初めて既存の同名出力が
+ * 置き換わるため、失敗した録画が既存物を壊すことはない。
+ *
+ * 公開はセット単位で全か無かにする。MP4 と MOV を出す構成で 2 件目の rename が
+ * 失敗した場合、1 件目だけが置き換わるとフォーマット間で世代が混ざり、以前の
+ * 正常な動画も失われる。そのため既存出力を退避してから置換し、途中で失敗したら
+ * 置換済みを staging へ戻し、退避した既存出力を復帰させる。
  */
 export async function promoteOutputFiles(
 	outputs: readonly PlannedOutput[],
 ): Promise<void> {
-	for (const output of outputs) {
-		await rename(output.stagingPath, output.path);
+	const displaced: { readonly path: string; readonly backup: string }[] = [];
+	const promoted: PlannedOutput[] = [];
+	try {
+		for (const output of outputs) {
+			const backup = `${output.path}.${randomUUID()}.previous`;
+			try {
+				await rename(output.path, backup);
+				displaced.push({ path: output.path, backup });
+			} catch (error) {
+				// 既存出力が無いのが通常。それ以外の失敗は公開を中止する
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			await rename(output.stagingPath, output.path);
+			promoted.push(output);
+		}
+	} catch (cause) {
+		for (const output of promoted)
+			await rename(output.path, output.stagingPath).catch(() => undefined);
+		for (const { path, backup } of displaced)
+			await rename(backup, path).catch(() => undefined);
+		throw cause;
 	}
+	for (const { backup } of displaced) await rm(backup, { force: true });
 }
 
 export async function validateOutputFiles(

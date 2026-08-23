@@ -197,7 +197,15 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 							? "connect-timeout"
 							: "scene-open-failed";
 					error = started.error.message;
-					return failure(plan, reason, warnings, startedAt, error);
+					// 起動タイムアウト後の強制終了にも失敗した場合、Editor は生存した
+					// ままポート 7800 を握る。quit 経路と同じくバッチへ伝播する
+					if (started.error.terminationFailed) editorTerminationFailed = true;
+					return editorTerminationFailed
+						? {
+								...failure(plan, reason, warnings, startedAt, error),
+								editorTerminationFailed,
+							}
+						: failure(plan, reason, warnings, startedAt, error);
 				}
 				connected = true;
 

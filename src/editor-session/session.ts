@@ -11,6 +11,11 @@ export interface SessionError {
 	readonly kind: "launch-failed" | "connect-timeout" | "port-conflict";
 	readonly message: string;
 	readonly unityLogExcerpt?: string;
+	/**
+	 * Editor プロセスを終了できず生存したまま残った。呼び出し側はバッチを
+	 * 中断し、生存 Editor と並行してパッケージ復元を行ってはならない。
+	 */
+	readonly terminationFailed?: boolean;
 }
 
 export interface SessionDependencies {
@@ -208,12 +213,15 @@ export function createEditorSession(
 			}
 
 			let killNote = "";
+			let terminationFailed = false;
 			await kill().catch((cause) => {
+				terminationFailed = true;
 				killNote = ` さらに ${cause instanceof Error ? cause.message : String(cause)}`;
 			});
 			return err({
 				kind: "connect-timeout",
 				message: `Unity Editor への接続が ${timeoutSec} 秒以内に確立できませんでした。Editor.log を確認してください。${killNote}`,
+				...(terminationFailed ? { terminationFailed } : {}),
 			});
 		},
 		async quit(timeoutSec) {

@@ -331,6 +331,24 @@ describe("one scene job", () => {
 		expect(context.cleanup).toHaveBeenLastCalledWith([], false);
 	});
 
+	it("propagates a failed kill from the launch timeout path", async () => {
+		const context = setup();
+		context.session.start.mockResolvedValue({
+			ok: false as const,
+			error: {
+				kind: "connect-timeout" as const,
+				message: "connect timeout",
+				terminationFailed: true,
+			},
+		} as never);
+		const result = await context.job.run(plan);
+		expect(result).toMatchObject({
+			outcome: "failure",
+			failureReason: "connect-timeout",
+			editorTerminationFailed: true,
+		});
+	});
+
 	it("flags a failed Editor termination so the batch can abort", async () => {
 		const context = setup();
 		context.session.quit.mockRejectedValue(

@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { access, copyFile, readdir, rename, rm } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { resolveSessionDirectory } from "../shared/paths.js";
 import { err, ok, type Result } from "../shared/types.js";
@@ -11,8 +10,8 @@ import {
 	projectIdentityKey,
 	readBackupSession,
 	releaseBeginLock,
+	restoreBackupSession,
 	sessionMatchesProject,
-	writeBackupSession,
 } from "./backup.js";
 
 /** @impl URC-6.3 @impl URC-6.4 @impl URC-6.5 */
@@ -31,16 +30,6 @@ function defaultIsProcessAlive(pid: number): boolean {
 	}
 }
 
-async function atomicRestore(source: string, target: string): Promise<void> {
-	const temporary = `${target}.${randomUUID()}.restore.tmp`;
-	try {
-		await copyFile(source, temporary);
-		await rename(temporary, target);
-	} finally {
-		await rm(temporary, { force: true });
-	}
-}
-
 function restoreFailure(
 	message: string,
 	cause: unknown,
@@ -54,31 +43,7 @@ function restoreFailure(
 	});
 }
 
-export async function restoreSession(
-	session: BackupSession,
-): Promise<Result<void, GuardError>> {
-	try {
-		for (const file of session.files) {
-			const target = path.join(session.projectPath, file.relativePath);
-			const backup = path.join(session.sessionDirectory, file.backupFileName);
-			if (file.exists) {
-				await access(backup);
-				await atomicRestore(backup, target);
-			} else {
-				await rm(target, { force: true });
-			}
-		}
-		const restored = { ...session, status: "restored" as const };
-		await writeBackupSession(restored);
-		await rm(session.sessionDirectory, { recursive: true, force: true });
-		return ok(undefined);
-	} catch (cause) {
-		return restoreFailure(
-			"Project manifest restoration failed; the active session was retained for retry.",
-			cause,
-		);
-	}
-}
+export const restoreSession = restoreBackupSession;
 
 export async function detectStaleSessions(
 	options: RecoveryOptions = {},
@@ -135,6 +100,16 @@ export async function recoverStaleSessions(
 	if (!rootResult.ok)
 		// セッションディレクトリを解決できない環境では復旧対象も存在しない
 		return ok([]);
+	// 初回実行ではセッションルートが未作成で、ロックの一時ファイル書き込みが
+	// ENOENT になる。復旧対象が無くても preflight を落とさないよう先に作る
+	try {
+		await mkdir(rootResult.value, { recursive: true });
+	} catch (cause) {
+		return restoreFailure(
+			"セッションディレクトリを作成できませんでした。",
+			cause,
+		);
+	}
 	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
 	const projectKey = await projectIdentityKey(projectPath);
 	const lock = await acquireBeginLock(rootResult.value, projectKey, isAlive);

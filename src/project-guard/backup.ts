@@ -75,6 +75,8 @@ export interface BackupOptions {
 	readonly now?: () => Date;
 	readonly ownerPid?: number;
 	readonly isProcessAlive?: (pid: number) => boolean;
+	/** パッチ後のメタデータ書き込み。巻き戻し経路の検証用に差し替えられる */
+	readonly writeSession?: (session: BackupSession) => Promise<void>;
 }
 
 function defaultIsProcessAlive(pid: number): boolean {
@@ -246,6 +248,50 @@ export async function releaseBeginLock(lockPath: string): Promise<void> {
 	}
 	await rm(lockPath, { force: true });
 }
+async function atomicRestore(source: string, target: string): Promise<void> {
+	const temporary = `${target}.${randomUUID()}.restore.tmp`;
+	try {
+		await copyFile(source, temporary);
+		await rename(temporary, target);
+	} finally {
+		await rm(temporary, { force: true });
+	}
+}
+
+/**
+ * バックアップから manifest 群を戻し、セッションを閉じる。recovery の
+ * `restoreSession` はこれに委譲する(セッション開始失敗時の巻き戻しでも使うため、
+ * backup 側に実体を置いて backup ↔ recovery の循環参照を避ける)。
+ */
+export async function restoreBackupSession(
+	session: BackupSession,
+): Promise<Result<void, GuardError>> {
+	try {
+		for (const file of session.files) {
+			const target = path.join(session.projectPath, file.relativePath);
+			const backup = path.join(session.sessionDirectory, file.backupFileName);
+			if (file.exists) {
+				await access(backup);
+				await atomicRestore(backup, target);
+			} else {
+				await rm(target, { force: true });
+			}
+		}
+		await writeBackupSession({ ...session, status: "restored" as const });
+		await rm(session.sessionDirectory, { recursive: true, force: true });
+		return ok(undefined);
+	} catch (cause) {
+		return err({
+			kind: "restore-failed",
+			message:
+				"Project manifest restoration failed; the active session was retained for retry.",
+			cause,
+			manualRecoveryHint:
+				"Keep the active session directory and retry recovery before running another render.",
+		});
+	}
+}
+
 export async function beginBackupSession(
 	projectPath: string,
 	options: BackupOptions = {},
@@ -324,6 +370,22 @@ export async function beginBackupSession(
 		);
 	}
 }
+/**
+ * セッション開始途中の失敗を、プロジェクトを元に戻したうえで報告する。
+ * 巻き戻し自体が失敗した場合は、手動復旧の手掛かりを含む復元エラーを返す。
+ */
+async function rollback(
+	session: BackupSession,
+	original: { readonly ok: false; readonly error: GuardError },
+): Promise<Result<never, GuardError>> {
+	const restored = await restoreBackupSession(session);
+	if (restored.ok) return original;
+	return err({
+		...restored.error,
+		message: `${original.error.message} 巻き戻しにも失敗しました: ${restored.error.message}`,
+	});
+}
+
 export async function beginProjectSession(
 	projectPath: string,
 	options: BackupOptions = {},
@@ -365,21 +427,27 @@ export async function beginProjectSession(
 			sessionRoot,
 		});
 		if (!backup.ok) return backup;
+		// パッチ以降の失敗はプロジェクトを一時変更したまま返ってしまう。バッチは
+		// 開始されず復元も走らないため、この関数の中で必ず巻き戻す
 		const patched = await patchManifest(projectPath);
-		if (!patched.ok) return patched;
+		if (!patched.ok) return rollback(backup.value, patched);
 		const session = {
 			...backup.value,
 			addedPackages: patched.value,
 		} satisfies BackupSession;
 		try {
-			await writeBackupSession(session);
+			await (options.writeSession ?? writeBackupSession)(session);
 			return ok(session);
 		} catch (cause) {
-			return failure(
-				"io-error",
-				"Session metadata could not be updated after manifest patch.",
-				cause,
-			);
+			return rollback(session, {
+				ok: false,
+				error: {
+					kind: "io-error",
+					message:
+						"Session metadata could not be updated after manifest patch.",
+					cause,
+				},
+			});
 		}
 	} finally {
 		await releaseBeginLock(lock.value);

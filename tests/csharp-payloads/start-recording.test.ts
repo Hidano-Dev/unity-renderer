@@ -50,7 +50,10 @@ describe("start-recording payload (stage 2: rebuild in Play Mode and record)", (
 		);
 		expect(source).toContain("CaptureAudio = false");
 		expect(source).toContain("GameViewInputSettings");
-		expect(source).toContain("AsyncGPUReadback.WaitAllRequests()");
+		// Requirement 9.5: 開始前の 1 回だけでなく、録画中も毎フレーム同期する
+		expect(source.split("AsyncGPUReadback.WaitAllRequests()")).toHaveLength(3);
+		expect(source).toContain("SessionState.SetString(StartedOperationKey");
+		expect(source).toContain("SessionState.GetString(StartedOperationKey");
 		expect(source).toContain("controller.PrepareRecording()");
 		expect(source).toContain("controller.StartRecording()");
 		// OutputFile は拡張子を自動付与するため、拡張子なしパスを設定する

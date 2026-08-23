@@ -190,6 +190,40 @@ describe("staging and promotion", () => {
 		).rejects.toThrow();
 	});
 
+	it("rolls the whole set back when one format fails to publish", async () => {
+		const { readFile, readdir } = await import("node:fs/promises");
+		const directory = await temporaryDirectory();
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>",
+			formats: ["mp4", "mov-prores"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+		// 両フォーマットに前回の正常な動画がある状態
+		for (const output of outputs) {
+			await writeFile(output.path, `previous ${output.format}`);
+			await writeFile(output.stagingPath, `new ${output.format}`);
+		}
+		// 2 件目の staging を失わせ、公開の途中で失敗させる
+		await (await import("node:fs/promises")).rm(outputs[1]?.stagingPath ?? "");
+
+		await expect(promoteOutputFiles(outputs)).rejects.toThrow();
+
+		// 1 件目は元の動画に戻り、staging も残っている(部分公開で世代が混ざらない)
+		expect(await readFile(outputs[0]?.path ?? "", "utf8")).toBe("previous mp4");
+		expect(await readFile(outputs[0]?.stagingPath ?? "", "utf8")).toBe(
+			"new mp4",
+		);
+		// 2 件目の既存動画も失われない
+		expect(await readFile(outputs[1]?.path ?? "", "utf8")).toBe(
+			"previous mov-prores",
+		);
+		// 退避用の一時ファイルを残さない
+		expect(
+			(await readdir(directory)).filter((name) => name.includes(".previous")),
+		).toEqual([]);
+	});
+
 	it("ignores staging leftovers when choosing the next take", async () => {
 		const directory = await temporaryDirectory();
 		await writeFile(join(directory, "render_Intro_7.urc-partial.mp4"), "junk");
