@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	compilePayload,
 	createPayloadCompiler,
+	injectParams,
 	PARAMS_PLACEHOLDER,
 	payloadTemplates,
 } from "../../src/csharp-payloads/compile.js";
@@ -9,6 +10,26 @@ import {
 /** @test URC-8.1 @test URC-9.1 @test URC-10.1 @test URC-11.1 */
 
 describe("csharp payload compiler", () => {
+	it("injects JSON parameters into a generic source template", () => {
+		const params = {
+			path: 'C:\\work\\scene.cs"\n日本',
+			nested: { enabled: true },
+		};
+
+		expect(injectParams(`before ${PARAMS_PLACEHOLDER} after`, params)).toBe(
+			`before ${JSON.stringify(JSON.stringify(params))} after`,
+		);
+	});
+
+	it("requires exactly one parameter placeholder", () => {
+		expect(() => injectParams("without placeholder", {})).toThrow(
+			"must contain exactly one",
+		);
+		expect(() =>
+			injectParams(`${PARAMS_PLACEHOLDER}${PARAMS_PLACEHOLDER}`, {}),
+		).toThrow("must contain exactly one");
+	});
+
 	it("loads every payload from an independent template and injects JSON once", () => {
 		for (const id of [
 			"open-scene",

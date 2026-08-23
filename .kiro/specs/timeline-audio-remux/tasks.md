@@ -123,7 +123,7 @@
   - Files: src/audio-remux/output/finalize.ts, tests/audio-remux/output/finalize.test.ts
 
 - [ ] 4. 音声情報抽出 C# ペイロードと抽出実行サービスを実装する
-- [ ] 4.1 core 側共有ユーティリティの公開（パラメータ注入・ツール管理ディレクトリ）を実装する
+- [x] 4.1 core 側共有ユーティリティの公開（パラメータ注入・ツール管理ディレクトリ）を実装する
   - 前提: core の `csharp-payloads`（core task 6.1）と `shared/paths`（core task 3.1）が実装済みであること
   - core のプレースホルダ注入ロジックを汎用関数として export する（core の閉じた PayloadId union は変更しない）
   - ツール管理ディレクトリ（sessions と別系統の tools 配下）の解決関数を core の paths へ追加する

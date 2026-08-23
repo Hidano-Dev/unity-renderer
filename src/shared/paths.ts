@@ -5,6 +5,7 @@ import { type CommonError, err, ok, type Result } from "./types.js";
 /** @impl URC-13.2 */
 export const TOOL_NAME = "unity-render-core";
 export const SESSION_DIRECTORY_NAME = "sessions";
+export const TOOLS_DIRECTORY_NAME = "tools";
 
 export interface PathOptions {
 	readonly env?: NodeJS.ProcessEnv;
@@ -37,6 +38,15 @@ export function resolveSessionDirectory(
 	const toolDirectory = resolveToolDirectory(options);
 	return toolDirectory.ok
 		? ok(path.win32.join(toolDirectory.value, SESSION_DIRECTORY_NAME))
+		: toolDirectory;
+}
+
+export function resolveToolsDirectory(
+	options: PathOptions = {},
+): Result<string, CommonError> {
+	const toolDirectory = resolveToolDirectory(options);
+	return toolDirectory.ok
+		? ok(path.win32.join(toolDirectory.value, TOOLS_DIRECTORY_NAME))
 		: toolDirectory;
 }
 
