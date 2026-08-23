@@ -168,7 +168,7 @@
   - _Requirements: 8.5, 8.6, 9.2, 9.4, 10.4, 10.6_
   - Files: tests/audio-remux/integration/hook-flow.test.ts, tests/audio-remux/integration/dual-output.test.ts
 
-- [ ] 5.3 合成ルートへのフック登録と「映像成功・音声失敗」報告契約を検証する
+- [x] 5.3 合成ルートへのフック登録と「映像成功・音声失敗」報告契約を検証する
   - 前提: core の合成ルート（core task 9.1）とフックレジストリ・Scene ジョブのフック発火（core tasks 8.2, 8.4）が実装済みであること
   - core の合成ルート（cli）で音声フックを登録し、Scene の書き出し成功ごとに呼び出されることを結合テストで確認する
   - フック reject 時に、core の既存 reporting（Scene 出力記録・フック失敗区分・成否一覧・終了コード）が**追加変更なしで**「映像成功・音声失敗」を映像書き出し失敗と区別して表現できることを結合テストで検証する
