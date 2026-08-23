@@ -89,10 +89,21 @@ function responseResult(stdout: string): {
 	const parsed: unknown = JSON.parse(stdout);
 	if (!parsed || typeof parsed !== "object")
 		throw new Error("Invalid pipeline response");
-	const root = parsed as { result?: unknown; data?: { result?: unknown } };
+	const root = parsed as {
+		result?: unknown;
+		data?: { result?: unknown } | null;
+		errors?: readonly { readonly message?: unknown }[];
+	};
 	const result = root.result ?? root.data?.result;
-	if (!result || typeof result !== "object")
+	if (!result || typeof result !== "object") {
+		// CLI レベルの失敗(COMMAND_FAILED 等)は data が null で errors 配列に理由が入る
+		const cliError = root.errors
+			?.map((entry) => entry.message)
+			.filter((message): message is string => typeof message === "string")
+			.join("; ");
+		if (cliError) return { success: false, error: cliError };
 		throw new Error("Invalid pipeline result");
+	}
 	const value = (result as { result?: unknown }).result;
 	return {
 		success: (result as { success?: unknown }).success === true,
@@ -102,6 +113,16 @@ function responseResult(stdout: string): {
 				? (result as { error: string }).error
 				: undefined,
 	};
+}
+
+/**
+ * Editor が起動直後の import・コンパイル中、または Play Mode 遷移等の
+ * ドメインリロード中は Pipeline server が 503 Server Busy を返す。
+ * コマンドは実行されていないため、eval のタイムアウト予算内で再試行してよい。
+ */
+function isServerBusy(error: string | undefined): boolean {
+	if (!error) return false;
+	return /503|server busy|not serviceable|settling/iu.test(error);
 }
 
 export function createPipelineClient(
@@ -153,50 +174,63 @@ export function createPipelineClient(
 					`[eval ${startedAt}] id=${id} size=${Buffer.byteLength(payload.source)} transport=${options.transport.kind}`,
 				);
 
-				let response: PipelineCommandResult | undefined;
-				let lastCause: unknown;
-				for (let attempt = 1; attempt <= RETRIES; attempt++) {
-					try {
-						response = await execute("unity", args, { windowsHide: true });
-						break;
-					} catch (cause) {
-						lastCause = cause;
-						if (attempt === RETRIES) break;
-						await sleep(RETRY_DELAY_MS);
+				const deadline = Date.now() + options.timeoutSec * 1_000;
+				for (;;) {
+					let response: PipelineCommandResult | undefined;
+					let lastCause: unknown;
+					for (let attempt = 1; attempt <= RETRIES; attempt++) {
+						try {
+							response = await execute("unity", args, { windowsHide: true });
+							break;
+						} catch (cause) {
+							lastCause = cause;
+							if (attempt === RETRIES) break;
+							await sleep(RETRY_DELAY_MS);
+						}
 					}
+					if (!response) {
+						return err({
+							kind: "eval-transport-failed",
+							payloadId: payload.id,
+							message: "Unity Pipeline への接続に失敗しました",
+							cause: lastCause,
+						});
+					}
+					log(
+						`[eval ${new Date().toISOString()}] id=${id} status=${response.exitCode} response=${response.stdout || response.stderr}`,
+					);
+					let parsed: ReturnType<typeof responseResult>;
+					try {
+						parsed = responseResult(response.stdout);
+					} catch (cause) {
+						return err({
+							kind: response.exitCode === 124 ? "eval-timeout" : "eval-failed",
+							payloadId: payload.id,
+							message: "Unity Pipeline の応答を解釈できません",
+							cause,
+						});
+					}
+					if (response.exitCode !== 0 || !parsed.success) {
+						if (
+							isServerBusy(parsed.error) &&
+							Date.now() + RETRY_DELAY_MS < deadline
+						) {
+							log(
+								`[eval] id=${id} server busy; retrying in ${RETRY_DELAY_MS}ms`,
+							);
+							await sleep(RETRY_DELAY_MS);
+							continue;
+						}
+						return err({
+							kind: response.exitCode === 124 ? "eval-timeout" : "eval-failed",
+							payloadId: payload.id,
+							message:
+								parsed.error ??
+								(response.stderr || "C# eval の実行に失敗しました"),
+						});
+					}
+					return ok({ returnValue: parsed.value ?? "" });
 				}
-				if (!response) {
-					return err({
-						kind: "eval-transport-failed",
-						payloadId: payload.id,
-						message: "Unity Pipeline への接続に失敗しました",
-						cause: lastCause,
-					});
-				}
-				log(
-					`[eval ${new Date().toISOString()}] id=${id} status=${response.exitCode} response=${response.stdout || response.stderr}`,
-				);
-				let parsed: ReturnType<typeof responseResult>;
-				try {
-					parsed = responseResult(response.stdout);
-				} catch (cause) {
-					return err({
-						kind: response.exitCode === 124 ? "eval-timeout" : "eval-failed",
-						payloadId: payload.id,
-						message: "Unity Pipeline の応答を解釈できません",
-						cause,
-					});
-				}
-				if (response.exitCode !== 0 || !parsed.success) {
-					return err({
-						kind: response.exitCode === 124 ? "eval-timeout" : "eval-failed",
-						payloadId: payload.id,
-						message:
-							parsed.error ??
-							(response.stderr || "C# eval の実行に失敗しました"),
-					});
-				}
-				return ok({ returnValue: parsed.value ?? "" });
 			} finally {
 				if (tempPath && !dependencies.debug)
 					await unlink(tempPath).catch(() => undefined);

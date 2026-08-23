@@ -26,6 +26,7 @@ export interface SessionDependencies {
 	readonly requestQuit?: () => Promise<void>;
 	readonly sleep?: (milliseconds: number) => Promise<void>;
 	readonly pollIntervalMs?: number;
+	readonly resolvePidByPort?: (port: number) => Promise<number | undefined>;
 }
 
 export interface EditorSession {
@@ -84,6 +85,24 @@ async function defaultIsProcessAlive(pid: number): Promise<boolean> {
 	}
 }
 
+async function defaultResolvePidByPort(
+	port: number,
+): Promise<number | undefined> {
+	if (process.platform !== "win32") return undefined;
+	try {
+		const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "tcp"], {
+			windowsHide: true,
+		});
+		const match = stdout.match(
+			new RegExp(`:${port}\\s+\\S+\\s+LISTENING\\s+(\\d+)`, "u"),
+		);
+		const pid = match?.[1] !== undefined ? Number(match[1]) : Number.NaN;
+		return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function createEditorSession(
 	dependencies: SessionDependencies = {},
 ): EditorSession {
@@ -100,6 +119,8 @@ export function createEditorSession(
 	const requestQuit = dependencies.requestQuit ?? (async () => undefined);
 	const sleep = dependencies.sleep ?? defaultSleep;
 	const pollIntervalMs = dependencies.pollIntervalMs ?? 2_000;
+	const resolvePidByPort =
+		dependencies.resolvePidByPort ?? defaultResolvePidByPort;
 
 	const kill = async (): Promise<void> => {
 		if (killPromise) return killPromise;
@@ -166,6 +187,9 @@ export function createEditorSession(
 						`http://${PIPELINE_HOST}:${PIPELINE_PORT}/api/editor_status`,
 					)
 				) {
+					// unity open が返す PID は短命なランチャーのもの。quit / kill を
+					// Editor 本体へ効かせるため、7800 を Listen する実プロセスに差し替える
+					pid = (await resolvePidByPort(PIPELINE_PORT)) ?? pid;
 					currentState = "connected";
 					return ok(undefined);
 				}

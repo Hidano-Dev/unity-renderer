@@ -1,4 +1,4 @@
-import { readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { OutputFormat } from "../config/schema.js";
 
@@ -127,7 +127,13 @@ function outputPath(
 async function nextTake(input: OutputPlanInput): Promise<number> {
 	if (!wildcardNames(input.fileName).includes("Take"))
 		return input.context.take ?? 1;
-	const files = await readdir(resolve(input.directory));
+	let files: readonly string[];
+	try {
+		files = await readdir(resolve(input.directory));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return 1;
+		throw error;
+	}
 	const marker = "__TAKE__";
 	const configuredExtension = extname(input.fileName).toLowerCase();
 	const fileNameTemplate = [".mp4", ".mov"].includes(configuredExtension)
@@ -156,6 +162,7 @@ export async function planOutputs(
 	assertWildcards(input.fileName);
 	if (input.formats.length === 0)
 		throw new Error("At least one output format is required");
+	await mkdir(resolve(input.directory), { recursive: true });
 	const take = await nextTake(input);
 	const context = { ...input.context, take };
 	const planned = input.formats.map((format) => ({

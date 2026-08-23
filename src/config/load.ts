@@ -38,7 +38,8 @@ export async function loadConfig(
 
 	let input: unknown;
 	try {
-		input = JSON.parse(contents) as unknown;
+		// Windows のエディタ・PowerShell は BOM 付き UTF-8 を書くことがある
+		input = JSON.parse(contents.replace(/^\uFEFF/u, "")) as unknown;
 	} catch (cause) {
 		const message = cause instanceof Error ? cause.message : "invalid JSON";
 		return err({ kind: "parse-error", issues: [{ path: "$", message }] });

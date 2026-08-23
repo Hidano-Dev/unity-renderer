@@ -1,4 +1,5 @@
 import type { RenderConfig } from "../config/schema.js";
+import { compilePayload } from "../csharp-payloads/compile.js";
 import type { PipelineClient } from "../editor-session/pipeline-client.js";
 import { createPipelineClient } from "../editor-session/pipeline-client.js";
 import {
@@ -35,10 +36,16 @@ export interface BatchResult {
 }
 
 export interface BatchRunnerDependencies {
-	readonly createSession?: () => EditorSession;
+	readonly createSession?: (options?: {
+		readonly requestQuit?: () => Promise<void>;
+	}) => EditorSession;
 	readonly createPipeline?: (
 		projectPath: string,
 		sessionDir: string,
+		options?: {
+			readonly debug?: boolean;
+			readonly log?: (message: string) => void;
+		},
 	) => PipelineClient;
 	readonly createSceneJob?: (dependencies: SceneJobDependencies) => SceneJob;
 	readonly restore?: (
@@ -73,11 +80,17 @@ export function createBatchRunner(
 	dependencies: BatchRunnerDependencies = {},
 ): BatchRunner {
 	const createSession =
-		dependencies.createSession ?? (() => createEditorSession());
+		dependencies.createSession ??
+		((options) => createEditorSession({ requestQuit: options?.requestQuit }));
 	const createPipeline =
 		dependencies.createPipeline ??
-		((projectPath, sessionDir) =>
-			createPipelineClient({ projectPath, sessionDir }));
+		((projectPath, sessionDir, options) =>
+			createPipelineClient({
+				projectPath,
+				sessionDir,
+				debug: options?.debug,
+				log: options?.log,
+			}));
 	const createJob = dependencies.createSceneJob ?? createSceneJob;
 	const restore = dependencies.restore ?? restoreSession;
 
@@ -89,11 +102,29 @@ export function createBatchRunner(
 			try {
 				for (const [index, scene] of plan.scenes.entries()) {
 					reporter?.sceneStarted(scene.sceneName, index, plan.scenes.length);
-					const session = createSession();
 					const pipeline = createPipeline(
 						plan.config.projectPath,
 						plan.session.sessionDirectory,
+						{
+							debug: plan.config.debug,
+							log: (message) => reporter?.debug(message),
+						},
 					);
+					// Editor の graceful 終了は quit-editor.cs の eval で行う(11.1)。
+					// unity open が返す PID はランチャーのもので Editor 本体には効かないため、
+					// プロセスシグナルではなく eval 経由で終了を要求する
+					const session = createSession({
+						requestQuit: async () => {
+							const quit = await pipeline.eval(
+								compilePayload("quit-editor", {}),
+								{
+									transport: { kind: "file" },
+									timeoutSec: plan.config.timeouts?.editorQuitSec ?? 60,
+								},
+							);
+							if (!quit.ok) throw new Error(quit.error.message);
+						},
+					});
 					const hookRunner = hooks?.afterRecording
 						? async (
 								context: Parameters<
@@ -119,6 +150,10 @@ export function createBatchRunner(
 						pipeline,
 						hooks,
 						runHooks: hookRunner,
+						logger: {
+							warn: (message) => reporter?.warn(message),
+							debug: (message) => reporter?.debug(message),
+						},
 					});
 					const jobPlan: SceneJobPlan = {
 						config: plan.config,

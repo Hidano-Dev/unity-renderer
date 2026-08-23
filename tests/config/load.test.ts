@@ -52,6 +52,18 @@ describe("loadConfig", () => {
 		});
 	});
 
+	it("accepts a UTF-8 BOM written by Windows editors", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "unity-render-core-config-"),
+		);
+		temporaryDirectories.push(directory);
+		const filePath = join(directory, "render-config.json");
+		await writeFile(filePath, `\uFEFF${JSON.stringify(validConfig)}`, "utf8");
+
+		const result = await loadConfig(filePath);
+		expect(result).toMatchObject({ ok: true });
+	});
+
 	it("returns useful errors for missing and malformed files", async () => {
 		const missing = await loadConfig(
 			join(tmpdir(), "does-not-exist-render-config.json"),

@@ -281,9 +281,12 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 						},
 					);
 					if (recording.ok) break;
+					// ドメインリロード中は Pipeline server が落ちるため、CLI はネットワーク
+					// エラーを返す。Play Mode 突入完了までのこの窓のエラーも再送対象
 					const retriable =
 						recording.error.kind === "eval-transport-failed" ||
-						recording.error.message.includes("PLAY_MODE_NOT_READY");
+						recording.error.message.includes("PLAY_MODE_NOT_READY") ||
+						/network error|sending the request/iu.test(recording.error.message);
 					if (
 						!retriable ||
 						(dependencies.now?.() ?? Date.now()) >= stage2Deadline

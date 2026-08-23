@@ -3,6 +3,8 @@
 export interface SceneResult {
 	readonly sceneName: string;
 	readonly outcome: "success" | "failure";
+	readonly failureReason?: string;
+	readonly error?: string;
 	readonly warnings: readonly string[];
 	readonly outputs: readonly {
 		readonly format: string;
@@ -71,6 +73,10 @@ export function createProgressReporter(
 			emit(
 				`${result.sceneName}: ${result.outcome === "success" ? "成功" : "失敗"} (${result.durationSec.toFixed(2)}s)`,
 			);
+			if (result.outcome === "failure") {
+				if (result.failureReason) emit(`失敗理由: ${result.failureReason}`);
+				if (result.error) emit(`詳細: ${result.error}`);
+			}
 			for (const output of result.outputs) {
 				emit(`出力: ${formatExplorerLink(output.videoPath, isTTY)}`);
 			}

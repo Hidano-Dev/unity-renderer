@@ -41,11 +41,16 @@ if (directorObject.playableAsset as UnityEngine.Timeline.TimelineAsset == null)
 // saved and quit-editor.cs exits without saving.
 directorObject.playOnAwake = false;
 
-// Atomic status write: temp file then rename, so the CLI never reads partial JSON.
+// Atomic status write: temp file then swap, so the CLI never reads partial JSON.
+// File.Move(src, dst, overwrite) is unavailable in Unity's C# profile; use the
+// atomic File.Replace when the destination exists.
 var tempPath = statusPath + ".tmp";
 var preparingJson = "{\"operationId\":\"" + JsonEscape(operationId) + "\",\"state\":\"preparing\"}";
 System.IO.File.WriteAllText(tempPath, preparingJson, new System.Text.UTF8Encoding(false));
-System.IO.File.Move(tempPath, statusPath, true);
+if (System.IO.File.Exists(statusPath))
+    System.IO.File.Replace(tempPath, statusPath, null);
+else
+    System.IO.File.Move(tempPath, statusPath);
 
 UnityEditor.EditorApplication.isPlaying = true;
 return "{\"playModeRequested\":true,\"directorName\":\"" + JsonEscape(directorName) + "\"}";

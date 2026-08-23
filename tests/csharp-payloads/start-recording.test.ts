@@ -59,7 +59,7 @@ describe("start-recording payload (stage 2: rebuild in Play Mode and record)", (
 		const source = compilePayload("start-recording", params).source;
 
 		expect(source).toContain("EditorApplication.update");
-		expect(source).toContain("File.Move(tempPath, statusPath, true)");
+		expect(source).toContain("File.Replace(tempPath, statusPath, null)");
 		expect(source).toContain('\\"elapsedSec\\":');
 		expect(source).toContain('StatusJson("recording"');
 		expect(source).toContain('StatusJson("completed"');

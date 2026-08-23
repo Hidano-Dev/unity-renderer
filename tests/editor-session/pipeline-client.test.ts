@@ -107,6 +107,62 @@ describe("PipelineClient", () => {
 		if (!result.ok) expect(result.error.kind).toBe("eval-failed");
 	});
 
+	it("retries a Server Busy response until the editor becomes serviceable", async () => {
+		sessionDir = await mkdtemp(join(tmpdir(), "pipeline-client-"));
+		const busy = {
+			stdout: JSON.stringify({
+				success: false,
+				data: null,
+				errors: [
+					{
+						code: "COMMAND_FAILED",
+						message:
+							"Pipeline server returned 503 Service Unavailable: Server Busy. Retry shortly.",
+					},
+				],
+			}),
+			stderr: "",
+			exitCode: 6,
+		};
+		const execute = vi
+			.fn()
+			.mockResolvedValueOnce(busy)
+			.mockResolvedValueOnce(busy)
+			.mockResolvedValue({
+				stdout: JSON.stringify({ result: { success: true, result: 42 } }),
+				stderr: "",
+				exitCode: 0,
+			});
+		const result = await setup({ execute }).eval(payload, {
+			timeoutSec: 60,
+			transport: { kind: "file" },
+		});
+
+		expect(result).toEqual({ ok: true, value: { returnValue: "42" } });
+		expect(execute).toHaveBeenCalledTimes(3);
+	});
+
+	it("stops Server Busy retries at the timeout budget and surfaces the CLI error", async () => {
+		sessionDir = await mkdtemp(join(tmpdir(), "pipeline-client-"));
+		const execute = vi.fn(async () => ({
+			stdout: JSON.stringify({
+				success: false,
+				data: null,
+				errors: [{ code: "COMMAND_FAILED", message: "Server Busy" }],
+			}),
+			stderr: "",
+			exitCode: 6,
+		}));
+		const result = await setup({ execute }).eval(payload, {
+			timeoutSec: 0,
+			transport: { kind: "file" },
+		});
+
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.message).toContain("Server Busy");
+	});
+
 	it("keeps the payload in debug mode after a failure and logs the response", async () => {
 		sessionDir = await mkdtemp(join(tmpdir(), "pipeline-client-"));
 		const logs: string[] = [];

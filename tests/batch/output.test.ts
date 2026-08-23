@@ -84,6 +84,22 @@ describe("output wildcard expansion", () => {
 		expect(outputs[0]?.path).toBe(join(directory, "render_Intro_3.mp4"));
 	});
 
+	it("creates a missing output directory and starts at take 1", async () => {
+		const directory = join(await temporaryDirectory(), "renders");
+
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>_<Take>",
+			formats: ["mp4"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+
+		expect(outputs[0]?.path).toBe(join(directory, "render_Intro_1.mp4"));
+		await expect(
+			(await import("node:fs/promises")).readdir(directory),
+		).resolves.toEqual([]);
+	});
+
 	it("rejects a two-format filename collision", async () => {
 		await expect(
 			planOutputs({

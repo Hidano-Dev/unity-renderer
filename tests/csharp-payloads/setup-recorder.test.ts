@@ -14,7 +14,7 @@ describe("setup-recorder payload (stage 1: prepare and enter Play Mode)", () => 
 		expect(source).toContain("PlayableDirector");
 		expect(source).toContain("playOnAwake = false");
 		expect(source).toContain('\\"state\\":\\"preparing\\"');
-		expect(source).toContain("File.Move(tempPath, statusPath, true)");
+		expect(source).toContain("File.Replace(tempPath, statusPath, null)");
 		expect(source).toContain("EditorApplication.isPlaying = true");
 		// Recorder 構成はドメインリロードで消えるため、ステージ 1 では構築しない(P-7)
 		expect(source).not.toContain("RecorderController");

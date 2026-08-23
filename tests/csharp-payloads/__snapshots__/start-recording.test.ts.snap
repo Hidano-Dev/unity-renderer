@@ -48,9 +48,14 @@ System.IO.Directory.CreateDirectory(statusDirectory);
 
 void WriteStatus(string bodyJson)
 {
+    // File.Move(src, dst, overwrite) is unavailable in Unity's C# profile; use the
+    // atomic File.Replace when the destination exists.
     var tempPath = statusPath + ".tmp";
     System.IO.File.WriteAllText(tempPath, bodyJson, new System.Text.UTF8Encoding(false));
-    System.IO.File.Move(tempPath, statusPath, true);
+    if (System.IO.File.Exists(statusPath))
+        System.IO.File.Replace(tempPath, statusPath, null);
+    else
+        System.IO.File.Move(tempPath, statusPath);
 }
 string StatusJson(string state, string extraFields)
 {
