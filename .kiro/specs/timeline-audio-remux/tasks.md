@@ -52,7 +52,7 @@
   - Files: spike/timeline-audio/README.md, .kiro/specs/timeline-audio-remux/design.md
 
 - [ ] 2. Unity 非依存の純 TS 基盤（メタデータ・時間計算）を実装する
-- [ ] 2.1 (P) 音声メタデータ JSON スキーマと検証・音源存在確認を実装する
+- [x] 2.1 (P) 音声メタデータ JSON スキーマと検証・音源存在確認を実装する
   - 音声メタデータ JSON の zod スキーマ（schemaVersion・クリップ属性一式・errors / warnings）を本 Spec の責務として定義し、TypeScript 型をスキーマから導出する
   - 受領 JSON の検証順序（パース → スキーマ検証 → schemaVersion 一致 → errors 空確認 → 全クリップの音源ファイル存在確認）を実装し、不適合箇所（zod issue パス / 欠落ファイルパスとクリップ ID）を特定できるエラーを返す
   - 整合規則（有限値・rootStartSec ≥ 0・effectiveSpeed > 0）をスキーマで強制し、欠落音源を黙って除外した部分ミックスへ進めない構造にする
