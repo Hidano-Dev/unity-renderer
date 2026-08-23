@@ -15,7 +15,8 @@ import {
 import { toExitCode } from "../reporting/exit-code.js";
 import { createProgressReporter } from "../reporting/progress.js";
 import type { Result } from "../shared/types.js";
-import { type EditorInstall, listEditors } from "../unity-env/editors.js";
+import type { EditorInstall, listEditors } from "../unity-env/editors.js";
+import { ensureEditor } from "../unity-env/install.js";
 import { readProjectVersion } from "../unity-env/project-version.js";
 import { detectUnityCli } from "../unity-env/unity-cli.js";
 
@@ -27,6 +28,8 @@ export interface RenderCommandDependencies {
 	readonly detectUnityCli?: typeof detectUnityCli;
 	readonly readProjectVersion?: typeof readProjectVersion;
 	readonly listEditors?: typeof listEditors;
+	readonly ensureEditor?: typeof ensureEditor;
+	readonly interactive?: boolean;
 	readonly resolveScenes?: typeof resolveScenes;
 	readonly checkProjectLock?: typeof checkProjectLock;
 	readonly recoverProject?: typeof recoverProject;
@@ -89,19 +92,16 @@ async function preflight(
 	);
 	if (!version.ok)
 		return { ok: false, error: { message: version.error.message } };
-	const editors = await (dependencies.listEditors ?? listEditors)();
-	if (!editors.ok)
-		return { ok: false, error: { message: editors.error.message } };
-	const editor = editors.value.find(
-		(candidate) => candidate.version.raw === version.value.raw,
+	// 一致 Editor の解決は install フロー(4.3-4.5)へ委譲する: 不一致時は対話モード
+	// でのみ unity install を確認し、非対話・辞退・失敗ではプロジェクト非変更で中断
+	const ensured = await (dependencies.ensureEditor ?? ensureEditor)(
+		version.value,
+		dependencies.interactive ?? process.stdin.isTTY === true,
+		{ listEditors: dependencies.listEditors },
 	);
-	if (!editor)
-		return {
-			ok: false,
-			error: {
-				message: `Unity Editor ${version.value.raw} is not installed. Run unity install or install the matching Editor.`,
-			},
-		};
+	if (!ensured.ok)
+		return { ok: false, error: { message: ensured.error.message } };
+	const editor = ensured.value;
 	const scenes = await (dependencies.resolveScenes ?? resolveScenes)(
 		projectPath,
 		config.scenes,

@@ -100,15 +100,21 @@ describe("output wildcard expansion", () => {
 		).resolves.toEqual([]);
 	});
 
-	it("rejects a two-format filename collision", async () => {
-		await expect(
-			planOutputs({
-				directory: await temporaryDirectory(),
-				fileName: "render_<Scene>.avi",
-				formats: ["mp4", "mov-prores"],
-				context: { project: "Demo", scene: "Intro" },
-			}),
-		).rejects.toThrow(/collision/i);
+	it("keeps unknown extensions as part of the name and appends the format extension", async () => {
+		const directory = await temporaryDirectory();
+
+		const outputs = await planOutputs({
+			directory,
+			fileName: "render_<Scene>.avi",
+			formats: ["mp4", "mov-prores"],
+			context: { project: "Demo", scene: "Intro" },
+		});
+
+		// Recorder は拡張子を除去して自動付与するため、計画パスも同じ規則に揃える
+		expect(outputs.map(({ path }) => path)).toEqual([
+			join(directory, "render_Intro.avi.mp4"),
+			join(directory, "render_Intro.avi.mov"),
+		]);
 	});
 });
 

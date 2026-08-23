@@ -111,17 +111,15 @@ function outputPath(
 	fileName: string,
 	format: OutputFormat,
 ): string {
+	// Recorder の OutputFile は拡張子を除去したうえでコンテナ拡張子を自動付与する。
+	// 計画パスと実出力パスを一致させるため、.mp4/.mov 以外の「拡張子風」の末尾
+	// (例: v1.2, clip.avi) は名前の一部として保持し、常にフォーマット拡張子を付ける
 	const extension = extname(fileName);
 	const stem =
 		extension && [".mp4", ".mov"].includes(extension.toLowerCase())
 			? fileName.slice(0, -extension.length)
 			: fileName;
-	return join(
-		resolve(directory),
-		extension && ![".mp4", ".mov"].includes(extension.toLowerCase())
-			? fileName
-			: `${stem}${extensions[format]}`,
-	);
+	return join(resolve(directory), `${stem}${extensions[format]}`);
 }
 
 async function nextTake(input: OutputPlanInput): Promise<number> {

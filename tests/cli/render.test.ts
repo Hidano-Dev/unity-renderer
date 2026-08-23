@@ -100,6 +100,77 @@ describe("render command", () => {
 		}
 	});
 
+	it("continues with the editor resolved by the install flow (4.3-4.5)", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "unity-render-cli-"));
+		try {
+			await projectFiles(root);
+			const configPath = path.join(root, "render-config.json");
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					projectPath: root,
+					scenes: ["Main"],
+					resolution: { width: 1920, height: 1080 },
+					frameRate: 30,
+					formats: ["mp4"],
+					output: {
+						directory: path.join(root, "renders"),
+						fileName: "<Scene>",
+					},
+				}),
+			);
+			const ensured: string[] = [];
+			const dependencies: RenderCommandDependencies = {
+				detectUnityCli: async () => ({
+					ok: true,
+					value: { cliVersion: "1.0.0" },
+				}),
+				// 不一致 → 対話フローで unity install が成功したケースを模擬する
+				ensureEditor: async (required, interactive) => {
+					ensured.push(`${required.raw}:${interactive}`);
+					return {
+						ok: true,
+						value: {
+							version: { raw: required.raw, major: required.major },
+							executablePath: "Unity.exe",
+						},
+					};
+				},
+				interactive: true,
+				beginSession: async () => ({
+					ok: true,
+					value: {
+						version: 1,
+						projectPath: root,
+						createdAt: "now",
+						status: "active",
+						sessionDirectory: root,
+						files: [],
+						addedPackages: [],
+					},
+				}),
+				batchRunner: {
+					run: async () => ({
+						scenes: [
+							{
+								sceneName: "Main",
+								outcome: "success",
+								warnings: [],
+								outputs: [],
+								durationSec: 0,
+							},
+						],
+						restoreSucceeded: true,
+					}),
+				},
+			};
+			expect(await runRender(configPath, dependencies)).toBe(0);
+			expect(ensured).toEqual(["6000.0.36f1:true"]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before starting a session when the editor version does not match", async () => {
 		const root = await mkdtemp(path.join(tmpdir(), "unity-render-cli-"));
 		try {
