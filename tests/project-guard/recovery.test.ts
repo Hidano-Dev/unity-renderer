@@ -142,4 +142,47 @@ describe("project recovery", () => {
 		const second = await beginProjectSession(root, { sessionRoot });
 		expect(second.ok).toBe(false);
 	});
+
+	it("serializes simultaneous session starts so exactly one wins", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		// begin ロックがチェック→作成区間を直列化し、二重 active session を防ぐ
+		const results = await Promise.all([
+			beginProjectSession(root, { sessionRoot }),
+			beginProjectSession(root, { sessionRoot }),
+		]);
+		expect(results.filter((result) => result.ok)).toHaveLength(1);
+	});
+
+	it("steals a begin lock left behind by a dead process", async () => {
+		const root = await project();
+		const sessionRoot = await mkdtemp(
+			path.join(os.tmpdir(), "urc-recovery-sessions-"),
+		);
+		temporaryDirectories.push(sessionRoot);
+		const { createHash } = await import("node:crypto");
+		const hash = createHash("sha256")
+			.update(path.resolve(root))
+			.digest("hex")
+			.slice(0, 12);
+		await writeFile(
+			path.join(sessionRoot, `${hash}.begin.lock`),
+			JSON.stringify({ pid: 99999 }),
+		);
+
+		const refused = await beginProjectSession(root, {
+			sessionRoot,
+			isProcessAlive: () => true,
+		});
+		expect(refused.ok).toBe(false);
+
+		const stolen = await beginProjectSession(root, {
+			sessionRoot,
+			isProcessAlive: () => false,
+		});
+		expect(stolen.ok).toBe(true);
+	});
 });

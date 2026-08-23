@@ -46,6 +46,16 @@ export interface BackupOptions {
 	readonly sessionRoot?: string;
 	readonly now?: () => Date;
 	readonly ownerPid?: number;
+	readonly isProcessAlive?: (pid: number) => boolean;
+}
+
+function defaultIsProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (cause) {
+		return (cause as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 const manifestFiles = [
 	{
@@ -100,12 +110,66 @@ export async function readBackupSession(
 		await readFile(path.join(sessionDirectory, "session.json"), "utf8"),
 	) as BackupSession;
 }
-function sessionDirectoryName(projectPath: string, now: Date): string {
-	const projectHash = createHash("sha256")
+function projectHashOf(projectPath: string): string {
+	return createHash("sha256")
 		.update(path.resolve(projectPath))
 		.digest("hex")
 		.slice(0, 12);
-	return `${projectHash}-${now.toISOString().replace(/[-:.TZ]/g, "")}`;
+}
+
+function sessionDirectoryName(projectPath: string, now: Date): string {
+	return `${projectHashOf(projectPath)}-${now.toISOString().replace(/[-:.TZ]/g, "")}`;
+}
+
+/**
+ * findActiveSessions → beginBackupSession のチェック→作成区間を直列化する
+ * 排他ロック。`wx` フラグの排他作成はアトミックで、同時実行の双方がチェックを
+ * 通過して active session を二重に作る TOCTOU を防ぐ。死亡プロセスの残した
+ * ロックは奪取する。
+ */
+async function acquireBeginLock(
+	sessionRoot: string,
+	projectPath: string,
+	isAlive: (pid: number) => boolean,
+): Promise<Result<string, GuardError>> {
+	const lockPath = path.join(
+		sessionRoot,
+		`${projectHashOf(projectPath)}.begin.lock`,
+	);
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			await writeFile(lockPath, JSON.stringify({ pid: process.pid }), {
+				flag: "wx",
+			});
+			return ok(lockPath);
+		} catch (cause) {
+			if ((cause as NodeJS.ErrnoException).code !== "EEXIST")
+				return failure(
+					"io-error",
+					"セッション開始ロックの作成に失敗しました。",
+					cause,
+				);
+			let lockOwnerPid: number | undefined;
+			try {
+				const parsed = JSON.parse(await readFile(lockPath, "utf8")) as {
+					pid?: number;
+				};
+				lockOwnerPid = typeof parsed.pid === "number" ? parsed.pid : undefined;
+			} catch {
+				// 読めないロックは書き込み途中か残骸。次の分岐で奪取を試みる
+			}
+			if (lockOwnerPid !== undefined && isAlive(lockOwnerPid))
+				return failure(
+					"io-error",
+					"別の実行がこのプロジェクトのセッションを開始中です。同時実行はできません。",
+				);
+			await rm(lockPath, { force: true });
+		}
+	}
+	return failure(
+		"io-error",
+		"セッション開始ロックを獲得できませんでした。再実行してください。",
+	);
 }
 export async function beginBackupSession(
 	projectPath: string,
@@ -187,35 +251,57 @@ export async function beginProjectSession(
 	projectPath: string,
 	options: BackupOptions = {},
 ): Promise<Result<BackupSession, GuardError>> {
-	const activeSessions = await findActiveSessions(
-		projectPath,
-		options.sessionRoot,
-	);
-	if (activeSessions.length > 0)
-		return failure(
-			"io-error",
-			"An active backup session already exists for this project; refuse concurrent execution.",
-			new Error(
-				activeSessions.map((session) => session.sessionDirectory).join(", "),
-			),
-		);
-	const backup = await beginBackupSession(projectPath, options);
-	if (!backup.ok) return backup;
-	const patched = await patchManifest(projectPath);
-	if (!patched.ok) return patched;
-	const session = {
-		...backup.value,
-		addedPackages: patched.value,
-	} satisfies BackupSession;
+	const rootResult =
+		options.sessionRoot === undefined
+			? resolveSessionDirectory()
+			: ok(options.sessionRoot);
+	if (!rootResult.ok) return failure("io-error", rootResult.error.message);
+	const sessionRoot = rootResult.value;
 	try {
-		await writeBackupSession(session);
-		return ok(session);
+		await mkdir(sessionRoot, { recursive: true });
 	} catch (cause) {
 		return failure(
 			"io-error",
-			"Session metadata could not be updated after manifest patch.",
+			"セッションディレクトリを作成できませんでした。",
 			cause,
 		);
+	}
+	const isAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+	const lock = await acquireBeginLock(sessionRoot, projectPath, isAlive);
+	if (!lock.ok) return lock;
+	try {
+		const activeSessions = await findActiveSessions(projectPath, sessionRoot);
+		if (activeSessions.length > 0)
+			return failure(
+				"io-error",
+				"An active backup session already exists for this project; refuse concurrent execution.",
+				new Error(
+					activeSessions.map((session) => session.sessionDirectory).join(", "),
+				),
+			);
+		const backup = await beginBackupSession(projectPath, {
+			...options,
+			sessionRoot,
+		});
+		if (!backup.ok) return backup;
+		const patched = await patchManifest(projectPath);
+		if (!patched.ok) return patched;
+		const session = {
+			...backup.value,
+			addedPackages: patched.value,
+		} satisfies BackupSession;
+		try {
+			await writeBackupSession(session);
+			return ok(session);
+		} catch (cause) {
+			return failure(
+				"io-error",
+				"Session metadata could not be updated after manifest patch.",
+				cause,
+			);
+		}
+	} finally {
+		await rm(lock.value, { force: true });
 	}
 }
 export const beginSession = beginProjectSession;
