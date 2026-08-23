@@ -102,7 +102,7 @@
   - _Depends: 2.3_
   - Files: src/audio-remux/ffmpeg/filter-graph.ts, src/audio-remux/ffmpeg/codec-matrix.ts, tests/audio-remux/ffmpeg/filter-graph.test.ts, tests/audio-remux/ffmpeg/codec-matrix.test.ts
 
-- [ ] 3.3 ffmpeg プロセス実行（mux ランナー）を実装する
+- [x] 3.3 ffmpeg プロセス実行（mux ランナー）を実装する
   - 3.2 の FilterGraph 契約に依存するため (P) ではない（同グループ直前タスクへのデータ依存）
   - 管理ディレクトリ（または manual）の ffmpeg のみを引数配列 spawn で実行し、映像ストリームは常にコピー（再エンコードなし）で一時出力へ mux する
   - タイムアウト強制終了（スパイク Q-9 で確定した式）と、非 0 終了・起動失敗・出力不正のエラー分類（stderr 末尾抜粋付き）を実装する
