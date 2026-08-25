@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	resolveSessionDirectory,
 	resolveToolDirectory,
+	resolveToolsDirectory,
 } from "../../src/shared/paths.js";
 
 describe("tool paths", () => {
@@ -24,6 +25,17 @@ describe("tool paths", () => {
 		expect(result).toEqual({
 			ok: true,
 			value: "C:\\Users\\tester\\AppData\\Local\\unity-render-core\\sessions",
+		});
+	});
+
+	it("resolves the separate tools directory below the tool-owned directory", () => {
+		const result = resolveToolsDirectory({
+			env: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
+		});
+
+		expect(result).toEqual({
+			ok: true,
+			value: "C:\\Users\\tester\\AppData\\Local\\unity-render-core\\tools",
 		});
 	});
 

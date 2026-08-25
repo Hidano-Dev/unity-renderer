@@ -1,0 +1,7 @@
+﻿{
+  "name": "com.spike.audio",
+  "version": "1.0.0",
+  "displayName": "Spike Audio Fixtures",
+  "description": "Embedded package holding an audio fixture, used to verify Packages/... asset path resolution.",
+  "unity": "6000.0"
+}

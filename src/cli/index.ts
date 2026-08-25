@@ -1,7 +1,15 @@
 import { Command } from "commander";
+import { createAudioRemuxHooks } from "../audio-remux/index.js";
+import { createHookRegistry } from "../hooks/registry.js";
 import { runCheck } from "./check.js";
 import { runInit } from "./init.js";
 import { runRender } from "./render.js";
+
+export function createCompositionHooks() {
+	const registry = createHookRegistry();
+	registry.register(createAudioRemuxHooks());
+	return registry.current[0];
+}
 
 /** @impl URC-15.1 */
 export function createCli(): Command {
@@ -11,7 +19,9 @@ export function createCli(): Command {
 		.command("render <config>")
 		.description("Render all configured Scenes")
 		.action(async (config: string) => {
-			process.exitCode = await runRender(config);
+			process.exitCode = await runRender(config, {
+				hooks: createCompositionHooks(),
+			});
 		});
 	program
 		.command("check <config>")

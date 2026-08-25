@@ -27,3 +27,13 @@ coverage/
 
 # Temporary E2E project (created ad hoc during manual scenarios)
 .tmp-e2e-run*/
+
+# Unity generated caches for the spike project (regenerated on open)
+spike/unity-project/Library/
+spike/unity-project/Temp/
+spike/unity-project/Obj/
+spike/unity-project/Logs/
+spike/unity-project/UserSettings/
+spike/unity-project/Build/
+spike/unity-project/*.csproj
+spike/unity-project/*.sln

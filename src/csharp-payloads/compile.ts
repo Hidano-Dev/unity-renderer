@@ -47,6 +47,20 @@ function encodeParams(params: Record<string, JsonValue>): string {
 	return JSON.stringify(json);
 }
 
+export function injectParams(
+	source: string,
+	params: Record<string, JsonValue>,
+): string {
+	const occurrences = source.split(PARAMS_PLACEHOLDER).length - 1;
+	if (occurrences !== 1) {
+		throw new Error(
+			`Source must contain exactly one ${PARAMS_PLACEHOLDER} placeholder`,
+		);
+	}
+
+	return source.replace(PARAMS_PLACEHOLDER, encodeParams(params));
+}
+
 export function compilePayload(
 	id: PayloadId,
 	params: Record<string, JsonValue>,
@@ -56,16 +70,9 @@ export function compilePayload(
 		throw new Error(`Unknown payload template: ${id}`);
 	}
 
-	const occurrences = template.split(PARAMS_PLACEHOLDER).length - 1;
-	if (occurrences !== 1) {
-		throw new Error(
-			`Payload template ${id} must contain exactly one ${PARAMS_PLACEHOLDER} placeholder`,
-		);
-	}
-
 	return {
 		id,
-		source: template.replace(PARAMS_PLACEHOLDER, encodeParams(params)),
+		source: injectParams(template, params),
 	};
 }
 

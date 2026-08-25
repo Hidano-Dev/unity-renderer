@@ -1,6 +1,7 @@
 import path from "node:path";
 import { type BatchRunner, createBatchRunner } from "../batch/runner.js";
 import { loadConfig } from "../config/load.js";
+import type { RenderHooks } from "../hooks/registry.js";
 import {
 	type BackupSession,
 	beginProjectSession,
@@ -37,6 +38,7 @@ export interface RenderCommandDependencies {
 		projectPath: string,
 	) => Promise<Result<BackupSession, GuardError>>;
 	readonly batchRunner?: BatchRunner;
+	readonly hooks?: RenderHooks;
 	readonly write?: (message: string) => void;
 	readonly isTTY?: boolean;
 }
@@ -162,7 +164,7 @@ export async function runRender(
 	try {
 		const batch = await (dependencies.batchRunner ?? createBatchRunner()).run(
 			{ ...plan.value, session: sessionResult.value },
-			undefined,
+			dependencies.hooks,
 			reporter,
 		);
 		return toExitCode(batch);
