@@ -2,86 +2,108 @@
 
 ## 今回やったこと
 
-- 前回の HANDOVER を読み、**実機検証の手順を提示**（前提チェック → 最小正常系 → 音声あり → 複数 Scene → 異常系 → 後始末確認）。**検証自体は未実施**
-- ユーザーからの追加要件 2 件を `feature/scene-selection-gui` 上に実装。**push 未実施・PR 未作成**
-  - `e8ec753` **GUI の Scene 部分一致フィルタ** — 大量の `SampleScene` から対象を選び出せるようにする
-  - `c6f804c` **録画前の RecorderTrack 削除と復元** — Timeline 上の RecorderTrack による二重書き出しを防ぐ
-- 検証済み: `vitest` **297 件 pass**（新規 30 件）、`biome check` ✓ / `tsc --noEmit` ✓ / `artgraph check --diff` ✓、`pnpm build` で exe 再生成済み
-- 前セッションから残っていた GUI サーバー（PID 37064）を、ユーザー承認のうえ終了（exe を掴んでビルドが EPERM になっていた）
+- **実機検証を完走**（前回まで 2 セッション積み残していた項目）。`feature/scene-selection-gui` の新規分 —— Scene 絞り込み GUI と RecorderTrack 掃除 —— は**すべて実機で通った**
+- 検証用の RecorderTrack フィクスチャを **uloop（Unity CLI Loop）の `execute-dynamic-code` で機械生成**。Unity Editor の手作業なしで再現できるようにした
+- 検証中に見つかったブランチ外のバグ 3 件を `docs/backlog.md` へ記録（B-1 は音声を持つ Scene の書き出しを確実に落とす重大度）
+
+## 実機検証の結果
+
+| 項目 | 結果 |
+|---|---|
+| 事前チェック（CLI / GUI 両方） | ✅ |
+| 最小正常系（`Spike`、RecorderTrack なし） | ✅ exit 0 |
+| RecorderTrack 掃除（`AudioSpike`） | ✅ exit 0 |
+| 複数 Scene バッチ（3 本） | ✅ 進捗表示・部分失敗で exit 2 |
+| GUI 絞り込み（実ブラウザ、45 Scene の実プロジェクト） | ✅ 全項目 |
+| GUI のライブログ / ボタン無効化 | ✅ |
+| 後始末（`.playable` 不変 / セッション復元 / repo clean） | ✅ |
+
+### RecorderTrack 掃除の証拠
+
+```
+scan:   timelines=[ AudioSpikeRoot.playable        / chain "root"
+                    AudioSpikeNestedL2.playable    / chain "root > ToNestedL1 > ToNestedL2" ]
+        removed=0  timelineDurationSec=25.999...
+remove: removed=2  timelineDurationSec=20.999...
+start:  totalFrames=630
+```
+
+出力 mp4 を ffprobe で実測して `duration=21.000000` / `nb_frames=630`。**ControlTrack 2 段のネストまで辿れており、duration 短縮が出力ファイルの実長に反映されている**。
+
+`.playable` は SHA-256 で前後比較して不変（**失敗した実行でも不変**）。`spike/unity-project/Recordings/` は生成されず、二重書き出しの阻止を確認。フィクスチャには**実物の `MovieRecorderSettings`（出力先 `Recordings/`）を付けた**ので、掃除が失敗していれば実際にファイルが生まれる —— この assertion は空振りしない。
+
+### GUI 絞り込みの証拠
+
+45 Scene のユーザー実プロジェクトで確認（`SampleScene` が大量にある想定そのもの）。
+
+- `Suisei_Pajama` が Scene 名 `20260623_SuiseiPajama` に一致 —— Scene 名にはアンダースコアが無く `Assets/Suisei_Pajama/...` というパスにしか無いので、**パス側にも当たっていることの決定的な証拠**
+- `GENERATED` で 20 件ヒット（大文字小文字を無視）
+- 絞り込み中に「表示中をすべて ON」→ 表示中 1 件だけが ON。別の語で絞って ON → **前に選んだ隠れている Scene は選択されたまま**
+- 「表示中をすべて OFF」も同様に表示中にだけ効く
+- 絞り込み解除でボタン表記が「すべて ON / OFF」へ戻り、件数表示から「表示中 N 件」が消える
+- 一致 0 件で「絞り込みに一致する Scene がありません。」
+- 再読み込みで絞り込み文字列が復元され、隠れている Scene の選択も残る
+- **`check` のログが `対象 Scene (2 件): ...2-B..., ...3-A...` を出した** —— 2-B は絞り込みで隠れていた Scene。隠れた選択が実行対象に入ることが実行経路で裏取りできた
 
 ## 決定事項
 
-### GUI フィルタ
-
-- 一致判定は **Scene 名 + アセットパス**への部分一致（大文字小文字無視、単一文字列）
-- 一致しない行は **DOM から消さず `hidden` で隠す**。`checkedSceneNames()` がチェックボックスを直接読むため、消すと絞り込んだ瞬間に隠れた Scene の選択が保存内容から抜ける
-- 「すべて ON / OFF」は**表示中の Scene にだけ**適用。絞り込み中はボタン表記を「表示中をすべて ON / OFF」へ変える
-- 絞り込み文字列は `gui-state.json` へ保存（`sceneFilter`）。表示の状態だが、毎回打ち直す手間を避ける
-
-### RecorderTrack 削除
-
-- **削除方式はメモリ上のみ**（`DeleteTrack`）。保存 API は呼ばず、`quit-editor.cs` も保存せず終了するため `.playable` は書き換わらない
-- **保険として削除前に `.playable` を project-guard セッションへ登録**（`registerBackupFiles`）。Editor が万一保存した場合・実行が落ちた場合も、manifest と同じ復元経路（次回実行時の自動復旧を含む）で戻る
-- `BackupFile.skipIfUnchanged` を追加。内容が同じなら復元をスキップする（書き戻すと mtime が動き Unity が再インポートする）
-- **走査は root + ControlTrack でネストした子 Timeline を再帰的に**。GroupTrack 配下も `GetChildTracks()` で明示的に辿る（深さ 32 制限 + 循環ガード）
-- `RecorderTrack` 型を解決できない場合は **0 件扱いにせず Scene を失敗させる**（`recorder-track-cleanup-failed`）。二重書き出しを黙って通さないため
-- 実行位置は `open-scene` の直後・`setup-recorder` の前
-- 削除後の Timeline 長を再取得して録画範囲へ反映（RecorderTrack のクリップが末尾を伸ばしていた場合に縮むため）
-- payload は **1 テンプレート + `mode` パラメータ**（`scan` / `remove`）。scan で 0 件なら remove もバックアップも走らせない
+- **検証用フィクスチャは uloop で作る**。`spike/timeline-audio/tools/*.cs` + `unity command eval_file` でも作れるが、uloop の `execute-dynamic-code` は `--code-file` と `using UnityEditor.Recorder;` の直書きが通り、失敗時に `get-logs` で Editor コンソールを読める
+- **uloop はフィクスチャ生成にだけ使い、測る前に撤去する**。uloop パッケージを入れると `Packages/manifest.json` / `packages-lock.json` / `ProjectSettings/PackageManagerSettings.asset` / `.uloop/` が変わり、検証の中核判定「`git status --short spike/unity-project` が差分ゼロ」と project-guard の manifest バックアップ対象を汚す。フェーズ A（uloop で生成）→ 撤去 → フェーズ B（出荷状態で計測）の順に分けた
+- **`recorder-track-cleanup-failed` の実機再現は諦める**。`patchManifest()` が `com.unity.recorder` を無ければ追加し直す（`src/project-guard/manifest-patch.ts:38-45`）ため、manifest から抜いても型解決失敗にならない。Recorder の存在が保証される設計側の性質なので、エラー経路は unit test の担保に留める
+- **ブランチ外のバグは `docs/backlog.md` に記録し、このブランチでは直さない**。B-1 は audio-remux の ZIP 展開で、Scene フィルタ / RecorderTrack と無関係
 
 ## 捨てた選択肢と理由
 
-- **削除して `AssetDatabase.SaveAssets` → 終了後にファイル復元** → 正常系でも利用者の `.playable` を書き換えるため、復元失敗時の被害が大きい。メモリ上のみ + バックアップを選択（ユーザー判断）
-- **root Timeline のみを対象** → ControlTrack 配下の RecorderTrack が残り、二重書き出しが起きる。再帰を選択（ユーザー判断）
-- **spec を切ってから実装** → GUI 自体も spec なしで実装した実績があるため、このブランチで直接実装（ユーザー判断）
-- **`scan` と `remove` で別テンプレート** → 走査ロジックが丸ごと重複する。`mode` パラメータ 1 本に統合
-- **フィルタを DOM ノードの削除で実装** → 隠れた Scene の選択が失われる（上記「決定事項」参照）
-- **フィルタをスペース区切りの AND 検索に** → 「部分一致」という要件より複雑で、挙動の説明が要る。単一部分一致に留めた
-- **`registerBackupFiles` を毎回上書き登録** → Scene をまたいで同じ Timeline を共有していると「変更後」で上書きしてしまう。登録済みパスは読み飛ばす
+- **`uloop launch` で Editor を起動** → Editor が `D:\UnityEditors\` にあり、uloop は Hub 既定パスしか探さないため `unity 6000.0.36f1 executable not found`。`unity open` で起動すれば uloop は**起動元を問わずその Editor に接続する**ので、そちらを使った
+- **`uloop skills install`** → skill が `spike/unity-project/.claude/skills` に入る。clean に保ちたいディレクトリなので入れず、`--help` の情報だけで足りた
+- **RecorderClip を設定なしの空クリップにする** → 掃除が失敗しても二重書き出しが起きず、`Recordings/` 未生成という判定が空振りする。実物の `MovieRecorderSettings` を付けた
+- **`AudioSpike` の検証で `range` を指定する** → 録画長が固定され、duration 短縮（26.0 → 21.0）が出力に現れなくなる。`range` を省いて全長録画した
+- **GUI 検証でプロジェクトパスを spike に差し替える** → 利用者の保存済み GUI 状態を壊す。復元されていた実プロジェクト（45 Scene）でそのまま検証し、終了時に絞り込み・選択・出力先を元の値へ戻した
 
 ## ハマりどころ
 
-- **既存テストの `pipeline.eval` スタブが `open-scene` 以外に `"{}"` を返す**ため、新しい `recorder-tracks` eval で 12 件が一斉に落ちた。`payloadReturnValue(id, openResult)` ヘルパーを入れて解決。`tests/audio-remux/integration/core-reporting.test.ts` も同じ対処が必要だった
-- `runner.ts` で **`session` が二重定義**になった（`BackupSession` を保持する外側の変数と、ループ内の `EditorSession`）。ループ内を `editorSession` へ改名
-- `pnpm build` が **EPERM で exe を置き換えられない**。前セッションの GUI サーバーが生きたままだった。`Get-Process unity-render` で特定
-- `restoreBackupSession` は `session.files` を汎用に回すので、**エントリを足すだけでクラッシュ復旧まで通る**。ただし runner の `finally` が `plan.session` を見ていたので、更新後の `session` を見るよう変更が必要だった
-- `tests/audio-remux/ffmpeg/acquire.test.ts` のフレークは今回も 1 度だけ再現。再実行で pass（前回と同じ、今回の変更とは無関係）
-- biome の format 差分は書いた直後に必ず出る。`npx biome format --write .` を挟むこと
+- **`Set-Content -Encoding UTF8` は BOM を付ける**（PowerShell 5.1）。これで書いた `manifest.json` が `JSON.parse` で落ち、`Temporary package addition failed.` としか出ずに 1 秒で終わった。原因表示の改善は backlog B-3
+- **`unity open` はフォアグラウンドで戻らない**。バックグラウンド実行にして、`.uloop/project-runner-pin.json` の生成でレディを判定した
+- Unity を `uloop launch -q` で殺すと `Temp/UnityLockfile` が 0 byte で残る。ただし `checkProjectLock()` は `r+` で開けるかどうかで判定する（`src/project-guard/lock.ts:20-40`）ので stale 扱いで通る
+- ブラウザ自動操作で `await` を挟んだ長い JS は CDP が 45 秒でタイムアウトすることがある。ボタン無効化の観測は **`click()` の直後に同期で `disabled` を読む**形にしたら一発で取れた（`start()` が fetch 前に `setRunning(true)` を呼ぶ実装なので同期で見える）
+- PowerShell で native exe に `2>&1` を使うと 1 行ごとに `NativeCommandError` で包まれる。`Start-Process -RedirectStandardOutput/-RedirectStandardError` に切り替えた
 
 ## 学び
 
-- **現行の録画は RecorderTrack を一切使っていない**。Play Mode 内で `RecorderController` を組む方式（`start-recording.cs`）。Timeline 上の RecorderTrack は利用者が置いたものだけで、放置すると管理外パスへ二重書き出しになる
-- `quit-editor.cs` は `AssetDatabase` / Scene の保存 API を呼ばず `EditorApplication.Exit(0)` する。**この設計のおかげでメモリ上の Timeline 変更がディスクに残らない** — 逆に言うと、ここに保存呼び出しを足すと今回の前提が崩れる
-- `TimelineAsset.duration` は RecorderTrack のクリップを含んだ値。削除で縮み得るので、`open-scene` の値をそのまま使い続けてはいけない
-- eval payload から Recorder の型を **`AppDomain.CurrentDomain.GetAssemblies()` + `GetType(名前)` で解決**すると、パッケージ未導入の環境でもコンパイルが通る。ただし「見つからない＝0 件」にすると危険なので、明示的にエラーを返すこと
+- **uloop の `execute-dynamic-code` は `using` を書ける**。この repo の `unity command eval` 経路（`PipelineEval_<hash>.Execute()` に包まれるため usings 不可・完全修飾必須）と違い、`using UnityEditor.Recorder;` を直書きして `tl.CreateTrack<RecorderTrack>()` / `track.CreateClip<RecorderClip>()` がそのまま通る。リフレクション回避で書けるぶん、フィクスチャ生成は圧倒的に楽
+- **uloop の Editor 探索は Unity Hub の既定パスだけ**。`unity editors -i --format json` の `location` を見れば実際の場所が分かる（この環境は `D:\UnityEditors\`）
+- **`unity-render` は音声のない Scene だと ffmpeg を要求しない**。`Spike` が通って `AudioSpike` が落ちた差はここ。B-1 が今まで表面化しなかった理由でもある
+- 実行が 1 秒未満で終わる UI の状態遷移は、ポーリングでは捕まらない。**同期的に設定される状態は同期的に読む**
 
 ## 次にやること
 
-1. **【最優先】実機検証** — 前回から積み残し。今回の変更で確認項目が増えている
-   ```powershell
-   cd D:\Personal\Repositries\unity-renderer
-   .\unity-render-gui.bat
-   ```
-   - 既存分: 進捗ログのライブ表示 / 実行中のボタン無効化 / exit 3 の日本語メッセージ / 複数 Scene バッチ表示
-   - **新規（フィルタ）**: 絞り込み中に「表示中をすべて ON」が表示中だけに効くか / 隠れた Scene の選択が保存に残るか / 再起動で絞り込み文字列が復元されるか
-   - **新規（RecorderTrack）**: RecorderTrack を持つ Scene を `spike/unity-project` に用意し、削除ログが警告として出るか / 書き出し後に `git status --short spike/unity-project` が**差分ゼロ**か（`.playable` が保存されていない証明）/ ネストした子 Timeline の RecorderTrack も外れるか
-2. 実機検証が通ったら **push と PR 作成**（`git push -u origin feature/scene-selection-gui` → `gh pr create`）
+1. **`docs/backlog.md` の B-1 を直す**（別ブランチ推奨）。ffmpeg 取得が初回に必ず失敗するため、音声を持つ Scene を書き出せない。修正自体は数行だが、ディレクトリエントリを含む zip の回帰テストを足すこと
+2. B-2 の設計意図を確認（クリップ単位のスキップか Scene 失敗か）
 3. 余力があれば: `render` 実行中の中断（キャンセル）ボタン、`range`（切り出し）の GUI 対応、`debug` チェックボックス
+
+## 環境に残した変更
+
+**`%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\` に ffmpeg 8.1.1（Gyan build）を置いてある。** B-1 を迂回して検証を完走するための措置。コードが用意している正規のフォールバック経路だが、**B-1 の症状を隠す**。B-1 を再現したいときは消すこと。
 
 ## 関連ファイル
 
 新規:
 
-- `src/csharp-payloads/templates/recorder-tracks.cs` — RecorderTrack の走査と削除（`mode` で scan / remove）
-- `src/batch/recorder-tracks.ts` — 応答のパースと「scan → backup → remove」の手順
-- `tests/batch/recorder-tracks.test.ts` / `tests/csharp-payloads/recorder-tracks.test.ts` / `tests/gui/page.test.ts`
+- `docs/backlog.md` — ブランチ外バグ 3 件
 
-変更:
+検証に使った再現手順（コミットしていない。必要なら再生成する）:
 
-- `src/gui/page.ts` — 絞り込み UI、`applySceneFilter()`、`visibleSceneBoxes()`
-- `src/gui/state.ts` — `sceneFilter` の追加とサニタイズ
-- `src/batch/scene-job.ts` — RecorderTrack 掃除の呼び出し、`recorder-track-cleanup-failed`、削除後 duration の反映
-- `src/batch/runner.ts` — `registerBackups` の受け渡し、更新後セッションでの復元
-- `src/project-guard/backup.ts` — `registerBackupFiles`、`skipIfUnchanged`
-- `src/csharp-payloads/compile.ts` — `recorder-tracks` の登録
-- `docs/setup.md` — 絞り込みの説明、「Timeline 上の RecorderTrack について」節
+```powershell
+# フェーズ A: フィクスチャ生成
+uloop package install --project-path spike\unity-project
+unity open "<repo>\spike\unity-project" --editor-version 6000.0.36f1 --args "-automated" --non-interactive
+uloop --project-path spike\unity-project execute-dynamic-code --code-file <build-recorder-track-fixture.cs>
+uloop launch -q --project-path spike\unity-project
+git checkout -- spike/unity-project/Packages spike/unity-project/ProjectSettings
+Remove-Item -Recurse -Force spike\unity-project\.uloop
+
+# フェーズ B: 計測（uloop 撤去後）
+dist\unity-render.exe render <config>.json
+```
+
+フィクスチャ生成コードは `AudioSpikeRoot.playable`（clip 21.0–26.0、duration を 21.0 → 26.0 へ伸ばす）と `AudioSpikeNestedL2.playable`（clip 0.0–1.0）へ `RecorderTrack` + `RecorderClip` + `MovieRecorderSettings`（320×180、出力先 `Recordings/`）を追加し、`AssetDatabase.SaveAssets()` を最後に 1 回だけ呼ぶ。既存の `RecorderTrack` を先に消すので冪等。
