@@ -46,6 +46,21 @@ describe("sanitizeGuiState", () => {
 		expect(state.frameRate).toBe(defaultGuiState.frameRate);
 	});
 
+	it("remembers the scene filter and ignores a non-string value", () => {
+		expect(sanitizeGuiState({ sceneFilter: "cut" }).sceneFilter).toBe("cut");
+		expect(sanitizeGuiState({ sceneFilter: 42 }).sceneFilter).toBe("");
+	});
+
+	it("keeps the selection independent from the scene filter", () => {
+		// 絞り込みは表示だけの状態。保存された選択を絞り込みが削ってはいけない
+		const state = sanitizeGuiState({
+			sceneFilter: "cut",
+			selectedScenes: ["Main", "Title"],
+		});
+
+		expect(state.selectedScenes).toEqual(["Main", "Title"]);
+	});
+
 	it("drops non-string and duplicate scene names", () => {
 		const state = sanitizeGuiState({
 			selectedScenes: ["Main", "Main", "", 42, null, "Title"],

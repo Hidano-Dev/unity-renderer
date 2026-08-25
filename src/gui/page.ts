@@ -77,6 +77,7 @@ button.primary { background: var(--accent); color: var(--accent-text); border-co
 .scenes { list-style: none; margin: 12px 0 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
 .scenes:empty { display: none; }
 .scenes li { border-bottom: 1px solid var(--border); padding: 7px 10px; }
+.scenes li[hidden] { display: none; }
 .scenes li:last-child { border-bottom: none; }
 .scenes label { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
 .scenes label.disabled { cursor: default; opacity: 0.75; }
@@ -155,6 +156,7 @@ function collect() {
     projectPath: byId("projectPath").value,
     outputDirectory: byId("outputDirectory").value,
     fileName: byId("fileName").value,
+    sceneFilter: byId("sceneFilter").value,
     // Scene 一覧をまだ読めていない間は、保存済みの選択をそのまま返す。
     // 空の一覧から checkedSceneNames() を作ると、パス誤りで一覧が出ない
     // だけの状況で前回の選択を消してしまう
@@ -178,15 +180,52 @@ function scheduleSave() {
   }, 400);
 }
 
+function visibleSceneBoxes() {
+  return document.querySelectorAll("#sceneList li:not([hidden]) .scene-check");
+}
+
 function updateSceneCount() {
   var selectable = 0;
   for (var i = 0; i < scenes.length; i += 1) {
     if (scenes[i].selectable) selectable += 1;
   }
-  var text = scenesLoaded
-    ? "(" + checkedSceneNames().length + " / " + selectable + " 件を選択)"
-    : "";
-  byId("sceneCount").textContent = text;
+  if (!scenesLoaded) {
+    byId("sceneCount").textContent = "";
+    return;
+  }
+  var text = "(" + checkedSceneNames().length + " / " + selectable + " 件を選択";
+  // 絞り込み中は「すべて ON」が何件に効くのかを数字で示す。隠れている
+  // Scene の選択は残るため、選択数と表示数がずれることを前提に読ませる
+  if (currentSceneFilter() !== "") text += " · 表示中 " + visibleSceneBoxes().length + " 件";
+  byId("sceneCount").textContent = text + ")";
+}
+
+function currentSceneFilter() {
+  return byId("sceneFilter").value.trim().toLowerCase();
+}
+
+/**
+ * 一致しない行は DOM から消さずに hidden で隠す。checkedSceneNames() は
+ * チェックボックスを直接読むため、消してしまうと絞り込んだ瞬間に隠れた
+ * Scene の選択が保存内容から抜け落ちる。
+ */
+function applySceneFilter() {
+  var needle = currentSceneFilter();
+  var items = document.querySelectorAll("#sceneList li");
+  var shown = 0;
+  for (var i = 0; i < items.length; i += 1) {
+    var matched = needle === "" || items[i].getAttribute("data-search").indexOf(needle) >= 0;
+    items[i].hidden = !matched;
+    if (matched) shown += 1;
+  }
+  var filtering = needle !== "";
+  byId("selectAll").textContent = filtering ? "表示中をすべて ON" : "すべて ON";
+  byId("selectNone").textContent = filtering ? "表示中をすべて OFF" : "すべて OFF";
+  if (scenesLoaded && scenes.length > 0) {
+    byId("sceneHint").textContent =
+      filtering && shown === 0 ? "絞り込みに一致する Scene がありません。" : "";
+  }
+  updateSceneCount();
 }
 
 function renderScenes() {
@@ -196,18 +235,24 @@ function renderScenes() {
 
   if (!scenesLoaded) {
     hint.textContent = "Unity プロジェクトのフォルダを指定すると Scene を一覧します。";
-    updateSceneCount();
+    applySceneFilter();
     return;
   }
   if (scenes.length === 0) {
     hint.textContent = "Assets フォルダに .unity ファイルが見つかりませんでした。パスを確認してください。";
-    updateSceneCount();
+    applySceneFilter();
     return;
   }
   hint.textContent = "";
 
   scenes.forEach(function (scene) {
     var item = document.createElement("li");
+    // 絞り込みは Scene 名だけでなくパスにも当てる。SampleScene のように
+    // 名前が同じ調子で並ぶプロジェクトでは、フォルダ名の方が効く
+    item.setAttribute(
+      "data-search",
+      (scene.sceneName + " " + scene.assetPaths.join(" ")).toLowerCase()
+    );
     var label = document.createElement("label");
     var box = document.createElement("input");
     box.type = "checkbox";
@@ -244,7 +289,7 @@ function renderScenes() {
     item.appendChild(label);
     list.appendChild(item);
   });
-  updateSceneCount();
+  applySceneFilter();
 }
 
 function loadScenes() {
@@ -274,7 +319,7 @@ function loadScenes() {
 }
 
 function setAllScenes(checked) {
-  var boxes = document.querySelectorAll(".scene-check");
+  var boxes = visibleSceneBoxes();
   for (var i = 0; i < boxes.length; i += 1) {
     if (!boxes[i].disabled) boxes[i].checked = checked;
   }
@@ -340,6 +385,7 @@ function applyState(state) {
   byId("projectPath").value = state.projectPath;
   byId("outputDirectory").value = state.outputDirectory;
   byId("fileName").value = state.fileName;
+  byId("sceneFilter").value = state.sceneFilter;
   byId("width").value = state.resolution.width;
   byId("height").value = state.resolution.height;
   byId("frameRate").value = state.frameRate;
@@ -380,6 +426,15 @@ function init() {
   byId("reloadScenes").addEventListener("click", function () {
     savedSelection = scenesLoaded ? checkedSceneNames() : savedSelection;
     loadScenes();
+  });
+  byId("sceneFilter").addEventListener("input", function () {
+    applySceneFilter();
+    scheduleSave();
+  });
+  byId("clearSceneFilter").addEventListener("click", function () {
+    byId("sceneFilter").value = "";
+    applySceneFilter();
+    scheduleSave();
   });
   byId("pickProject").addEventListener("click", pickInto("projectPath"));
   byId("pickOutput").addEventListener("click", pickInto("outputDirectory"));
@@ -429,9 +484,15 @@ export function renderPage(token: string): string {
   <section>
     <h2>2. 書き出す Scene <span id="sceneCount" class="count"></span></h2>
     <div class="row">
+      <label class="field" for="sceneFilter">絞り込み</label>
+      <input id="sceneFilter" class="grow" type="text" placeholder="Scene 名やフォルダ名の一部" spellcheck="false">
+      <button id="clearSceneFilter" type="button">クリア</button>
+    </div>
+    <div class="row">
       <button id="selectAll" type="button">すべて ON</button>
       <button id="selectNone" type="button">すべて OFF</button>
     </div>
+    <p class="hint">絞り込みは表示だけを変えます。ON / OFF は表示中の Scene にだけ効き、隠れている Scene の選択はそのまま残ります。</p>
     <p id="sceneHint" class="hint"></p>
     <ul id="sceneList" class="scenes"></ul>
   </section>

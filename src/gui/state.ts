@@ -28,6 +28,12 @@ export interface GuiState {
 	readonly projectPath: string;
 	readonly outputDirectory: string;
 	readonly fileName: string;
+	/**
+	 * Scene 一覧の絞り込み文字列。選択そのものではなく表示の状態だが、
+	 * SampleScene が大量にあるプロジェクトでは毎回打ち直すことになるため
+	 * 一緒に覚える。絞り込みは `selectedScenes` に影響しない。
+	 */
+	readonly sceneFilter: string;
 	readonly selectedScenes: readonly string[];
 	readonly resolution: {
 		readonly width: number;
@@ -41,6 +47,7 @@ export const defaultGuiState: GuiState = {
 	projectPath: "",
 	outputDirectory: "",
 	fileName: "<Scene>_<Take>",
+	sceneFilter: "",
 	selectedScenes: [],
 	resolution: { width: 1920, height: 1080 },
 	frameRate: 30,
@@ -112,6 +119,7 @@ export function sanitizeGuiState(input: unknown): GuiState {
 			defaultGuiState.outputDirectory,
 		),
 		fileName: asString(record.fileName, defaultGuiState.fileName),
+		sceneFilter: asString(record.sceneFilter, defaultGuiState.sceneFilter),
 		selectedScenes: asSceneNames(record.selectedScenes),
 		resolution: {
 			width: asPositiveNumber(
