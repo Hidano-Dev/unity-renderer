@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAudioExtraction } from "../../../src/audio-remux/extract/run-extract.js";
 import { DefaultMuxRunner } from "../../../src/audio-remux/ffmpeg/run.js";
@@ -37,7 +37,7 @@ describe("audio remux dual-output integration", () => {
 			script,
 			"const fs=require('node:fs'); const a=process.argv.slice(2); const out=a.at(-1); fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify(a)+'\\n'); if(out.endsWith('.mov.audiotmp.mov')) { process.exit(9); } fs.writeFileSync(out,'muxed-mp4');",
 		);
-		const metadataPath = join(sessionDir, "timeline-audio-metadata.json");
+		const metadataPath = join(sessionDir, "timeline-audio-metadata.Scene.json");
 		await mkdir(sessionDir, { recursive: true });
 		const context: HookContext = {
 			handoff: {
@@ -85,7 +85,8 @@ describe("audio remux dual-output integration", () => {
 		const hook = createAudioRemuxHooks({
 			extractor: { runExtraction: runAudioExtraction },
 			metadataLoader: {
-				loadAndValidate: (path) => loadAudioTimelineMetadata(dirname(path)),
+				loadAndValidate: (path) =>
+					loadAudioTimelineMetadata(dirname(path), basename(path)),
 			},
 			planner: { buildMixPlan },
 			ffmpegProvider: {

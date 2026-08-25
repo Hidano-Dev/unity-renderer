@@ -1,4 +1,4 @@
-import { dirname, join, parse } from "node:path";
+import { basename, dirname, join, parse } from "node:path";
 import type { HookContext, RenderHooks } from "../hooks/registry.js";
 import {
 	createExtractService,
@@ -16,7 +16,7 @@ import {
 } from "./ffmpeg/probe.js";
 import { DefaultMuxRunner, type MuxRunner } from "./ffmpeg/run.js";
 import {
-	AUDIO_METADATA_FILE_NAME,
+	audioMetadataFileName,
 	loadAudioTimelineMetadata,
 } from "./metadata/load.js";
 import type { AudioTimelineMetadata } from "./metadata/schema.js";
@@ -51,7 +51,8 @@ export interface AudioRemuxDeps {
 const defaultDeps: AudioRemuxDeps = {
 	extractor: createExtractService(),
 	metadataLoader: {
-		loadAndValidate: (path) => loadAudioTimelineMetadata(dirname(path)),
+		loadAndValidate: (path) =>
+			loadAudioTimelineMetadata(dirname(path), basename(path)),
 	},
 	planner: { buildMixPlan },
 	ffmpegProvider: createFfmpegAcquireManager(),
@@ -170,7 +171,12 @@ async function runAfterRecording(
 	deps: AudioRemuxDeps,
 ): Promise<void> {
 	const outputs = outputsFor(ctx);
-	const metadataPath = join(ctx.sessionDir, AUDIO_METADATA_FILE_NAME);
+	// Scene ごとに名前空間を分ける。バッチは全 Scene に同じ sessionDir を渡すため、
+	// 固定名だと次の Scene の抽出が前の Scene のメタデータを上書きしてしまう。
+	const metadataPath = join(
+		ctx.sessionDir,
+		audioMetadataFileName(ctx.handoff.sceneName),
+	);
 	ctx.logger.debug("[audio-remux] phase=extract");
 	const extracted = await deps.extractor.runExtraction(ctx, metadataPath);
 	if (!extracted.ok)
@@ -235,6 +241,7 @@ async function runAfterRecording(
 			ffmpegPath: ffmpeg.value.ffmpegPath,
 			videoPath: output.videoPath,
 			outputTmpPath,
+			sessionDir: ctx.sessionDir,
 			graph: buildFilterGraph(plan),
 			format: output.format,
 			timeoutSec:

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAudioExtraction } from "../../../src/audio-remux/extract/run-extract.js";
 import { DefaultMuxRunner } from "../../../src/audio-remux/ffmpeg/run.js";
@@ -46,7 +46,8 @@ async function fixture(clips: readonly object[]) {
 		errors: [],
 		warnings: [],
 	};
-	const metadataPath = join(sessionDir, "timeline-audio-metadata.json");
+	// Scene ごとに名前空間が分かれる
+	const metadataPath = join(sessionDir, "timeline-audio-metadata.Scene.json");
 	const logger = { warn: () => undefined, debug: () => undefined };
 	const context: HookContext = {
 		handoff: {
@@ -115,7 +116,8 @@ describe("audio remux integration hook flow", () => {
 		const hook = createAudioRemuxHooks({
 			extractor: { runExtraction: runAudioExtraction },
 			metadataLoader: {
-				loadAndValidate: (path) => loadAudioTimelineMetadata(dirname(path)),
+				loadAndValidate: (path) =>
+					loadAudioTimelineMetadata(dirname(path), basename(path)),
 			},
 			planner: { buildMixPlan },
 			ffmpegProvider: {
@@ -152,7 +154,8 @@ describe("audio remux integration hook flow", () => {
 		const hook = createAudioRemuxHooks({
 			extractor: { runExtraction: runAudioExtraction },
 			metadataLoader: {
-				loadAndValidate: (path) => loadAudioTimelineMetadata(dirname(path)),
+				loadAndValidate: (path) =>
+					loadAudioTimelineMetadata(dirname(path), basename(path)),
 			},
 			planner: { buildMixPlan },
 			ffmpegProvider: {

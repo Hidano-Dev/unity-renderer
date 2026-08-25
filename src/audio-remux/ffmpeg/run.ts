@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { OutputFormat } from "../../config/schema.js";
 import { err, ok, type Result } from "../../shared/types.js";
 import { codecArgsFor } from "./codec-matrix.js";
@@ -16,6 +16,12 @@ export interface MuxRequest {
 	readonly ffmpegPath: string;
 	readonly videoPath: string;
 	readonly outputTmpPath: string;
+	/**
+	 * 補助ファイル（filter script・ffmpeg ログ）の置き場。`HookContext.sessionDir`
+	 * を渡すこと。成果物ディレクトリへ書くと、ユーザーの出力フォルダに
+	 * `audio-mix.filter` が残り、デバッグログもセッション管理の外に出てしまう。
+	 */
+	readonly sessionDir: string;
 	readonly graph: FilterGraph;
 	readonly format: OutputFormat;
 	readonly timeoutSec: number;
@@ -76,9 +82,18 @@ async function outputIsValid(path: string): Promise<boolean> {
 export async function runMux(
 	request: MuxRequest,
 ): Promise<Result<void, MuxError>> {
-	const sessionDir = dirname(request.outputTmpPath);
-	const scriptPath = join(sessionDir, "audio-mix.filter");
-	const logPath = join(sessionDir, `ffmpeg-${request.format}.log`);
+	const scriptPath = join(request.sessionDir, "audio-mix.filter");
+	const logPath = join(request.sessionDir, `ffmpeg-${request.format}.log`);
+	// 呼び出し側が用意している前提だが、書き込みに失敗すると mux 全体が
+	// spawn-failed に化けて原因が追いにくいので、作成まで面倒を見る。
+	try {
+		await mkdir(request.sessionDir, { recursive: true });
+	} catch (cause) {
+		return err({
+			kind: "spawn-failed",
+			stderrTail: cause instanceof Error ? cause.message : String(cause),
+		});
+	}
 	const args = commandArgs(request, scriptPath);
 	const commandLine = [
 		request.ffmpegPath,

@@ -50,7 +50,14 @@ export interface FfmpegAcquireOptions {
 	readonly manifest?: FfmpegManifest;
 	readonly fetch?: FfmpegFetch;
 	readonly smokeTest?: FfmpegSmokeTest;
+	/** ロック待機の間隔を短縮するためのテスト用フック。 */
+	readonly sleep?: (milliseconds: number) => Promise<void>;
 }
+
+/** design 5.7: 先行プロセスのダウンロード完了を待つ上限。 */
+const LOCK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+/** design 5.7: ロック獲得待ちのポーリング間隔。 */
+const LOCK_POLL_INTERVAL_MS = 2_000;
 
 const defaultFetch: FfmpegFetch = (url) => fetch(url);
 const defaultSmoke: FfmpegSmokeTest = async (path) => {
@@ -222,12 +229,16 @@ export class FfmpegAcquireManager {
 	private readonly manifest: FfmpegManifest;
 	private readonly fetch: FfmpegFetch;
 	private readonly smokeTest: FfmpegSmokeTest;
+	private readonly sleep: (milliseconds: number) => Promise<void>;
 
 	public constructor(options: FfmpegAcquireOptions = {}) {
 		this.toolsDirectory = options.toolsDirectory ?? defaultToolsDirectory();
 		this.manifest = options.manifest ?? FFMPEG_MANIFEST;
 		this.fetch = options.fetch ?? defaultFetch;
 		this.smokeTest = options.smokeTest ?? defaultSmoke;
+		this.sleep =
+			options.sleep ??
+			((milliseconds) => new Promise((done) => setTimeout(done, milliseconds)));
 	}
 
 	/** ffprobe は同じ zip に同梱されるため常に ffmpeg.exe と同じディレクトリにある。 */
@@ -293,7 +304,11 @@ export class FfmpegAcquireManager {
 
 	private async acquireLock(lock: string): Promise<boolean> {
 		await mkdir(this.toolsDirectory, { recursive: true });
-		const deadline = Date.now() + 10_000;
+		// 待機側は「先行プロセスによる 146 MB のダウンロード完了」を待つ。実測で
+		// 高速回線でも 8.2 秒かかるため、短い上限では通常の回線で後続プロセスが
+		// 取り逃して Scene の音声合成が失敗する。design の規定どおり上限 10 分・
+		// 2 秒間隔とする（5.7）。
+		const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
 		while (Date.now() < deadline) {
 			try {
 				const handle = await open(lock, "wx");
@@ -306,7 +321,7 @@ export class FfmpegAcquireManager {
 					await rm(lock, { force: true });
 					continue;
 				}
-				await new Promise((done) => setTimeout(done, 50));
+				await this.sleep(LOCK_POLL_INTERVAL_MS);
 			}
 		}
 		return false;

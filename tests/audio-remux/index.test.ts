@@ -122,10 +122,10 @@ describe("createAudioRemuxHooks", () => {
 
 		expect(deps.extractor.runExtraction).toHaveBeenCalledWith(
 			ctx,
-			"C:\\sessions\\run-1\\timeline-audio-metadata.json",
+			"C:\\sessions\\run-1\\timeline-audio-metadata.Scene.json",
 		);
 		expect(deps.metadataLoader.loadAndValidate).toHaveBeenCalledWith(
-			"C:\\sessions\\run-1\\timeline-audio-metadata.json",
+			"C:\\sessions\\run-1\\timeline-audio-metadata.Scene.json",
 		);
 		expect(deps.planner.buildMixPlan).toHaveBeenCalledWith(
 			metadata,

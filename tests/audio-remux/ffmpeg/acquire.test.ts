@@ -185,17 +185,21 @@ describe("FfmpegAcquireManager", () => {
 			await new Promise((done) => setTimeout(done, 20));
 			return new Response(archive, { status: 200 });
 		};
+		// 実運用の待機は 2 秒間隔なのでテストでは短縮する
+		const sleep = async () => {};
 		const first = new FfmpegAcquireManager({
 			toolsDirectory: directory,
 			manifest,
 			fetch: delayedFetch,
 			smokeTest: smokeOk,
+			sleep,
 		});
 		const second = new FfmpegAcquireManager({
 			toolsDirectory: directory,
 			manifest,
 			fetch: delayedFetch,
 			smokeTest: smokeOk,
+			sleep,
 		});
 		const results = await Promise.all([
 			first.ensureFfmpeg(),
@@ -203,6 +207,48 @@ describe("FfmpegAcquireManager", () => {
 		]);
 		expect(results.every((result) => result.ok)).toBe(true);
 		expect(fetchCount).toBe(1);
+		await rm(directory, { recursive: true, force: true });
+	});
+
+	// 146 MB のダウンロードは実測でも高速回線で 8.2 秒かかる。待機側の上限が
+	// 短いと、通常の回線で後続プロセスが取り逃して Scene の音声合成が失敗する。
+	// design 5.7 の規定は「2 秒間隔・上限 10 分」。
+	it("waits out a live lock long enough for a full download to finish", async () => {
+		const directory = await setup();
+		const archive = zipStored(
+			FFMPEG_MANIFEST.archiveBinaryRelPath,
+			new TextEncoder().encode("fake"),
+		);
+		const manifest = testManifest(archive);
+		// 生存プロセスが保持しているロックを模擬する
+		await writeFile(
+			join(directory, ".acquire.lock"),
+			JSON.stringify({ pid: process.pid }),
+		);
+
+		// 実時間を使わずに待機量だけを積算する。2 分ぶん待った時点で先行プロセスが
+		// ダウンロードを終えてロックを手放した、という状況を模擬する。
+		let waitedMs = 0;
+		const intervals: number[] = [];
+		const manager = new FfmpegAcquireManager({
+			toolsDirectory: directory,
+			manifest,
+			fetch: async () => new Response(archive, { status: 200 }),
+			smokeTest: smokeOk,
+			sleep: async (milliseconds) => {
+				intervals.push(milliseconds);
+				waitedMs += milliseconds;
+				if (waitedMs >= 120_000)
+					await rm(join(directory, ".acquire.lock"), { force: true });
+			},
+		});
+
+		const result = await manager.ensureFfmpeg();
+
+		expect(result.ok).toBe(true);
+		// 10 秒程度の上限で打ち切っていたらここまで待てない
+		expect(waitedMs).toBeGreaterThanOrEqual(120_000);
+		expect(new Set(intervals)).toEqual(new Set([2_000]));
 		await rm(directory, { recursive: true, force: true });
 	});
 });

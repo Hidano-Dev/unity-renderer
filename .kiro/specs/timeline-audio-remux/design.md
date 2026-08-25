@@ -661,7 +661,7 @@ interface FfmpegProvider {
   - クリッピング抑制は入れない（Unity と同条件）。中間処理が float なので mux 前にはクリップしないが、**ffmpeg のリサンプラは鋭い過渡音でオーバーシュートする**（0.5 倍速のクリック列でピーク 1.166。Unity は 0.911）。最終エンコードで 0 dBFS を超える成分は歪みうる
   - その後 `apad` + `atrim=end_sample=<総サンプル数>` + `asetpts=N/SR/TB` でストリーム長を確定 → `[mix]`
 - **出力の総サンプル数は映像長から導出する（Q-9 実測）**: `round((outPoint - inPoint) × 48000)`。音声側の実測長に合わせるのではなく映像長基準にすることで、ストリーム長差が **0.000000 秒（0.000 フレーム）** になることを実 Recorder 出力で確認した（音声側基準にすると 0.008 秒 = 0.24 フレームの差が残った）
-- filter graph は Windows のコマンドライン長制限を回避するため常に `-filter_complex_script <sessionDir>\audio-mix.filter` で渡す（クリップ数非依存）。実測では 8 クリップで 1,280 bytes、150 クリップ換算で約 24 KB となり、コマンドライン長制限（約 8,191 文字）を超えるため**スクリプトファイル渡しは必須**
+- filter graph は Windows のコマンドライン長制限を回避するため常に `-filter_complex_script <sessionDir>\audio-mix.filter` で渡す（クリップ数非依存）。**ここでの `<sessionDir>` は `HookContext.sessionDir` であり、成果物の出力ディレクトリではない**。出力側へ書くと通常実行でもユーザーのフォルダに `audio-mix.filter` が残り、デバッグログ（`<sessionDir>\ffmpeg-<format>.log`）もセッション単位の保持・管理の外に出る。`MuxRequest.sessionDir` として明示的に受け渡す。実測では 8 クリップで 1,280 bytes、150 クリップ換算で約 24 KB となり、コマンドライン長制限（約 8,191 文字）を超えるため**スクリプトファイル渡しは必須**
 - **mux コマンド形（6.1 / 6.3）**: `ffmpeg -y -i <video> [入力群] -filter_complex_script <script> -map 0:v:0 -map "[mix]" -c:v copy <コーデック引数> <一時出力>`。映像ストリームは常に `-c:v copy`（再エンコードなし。6.3）
 - **コーデックマトリクス（6.4 / D-6 — Q-8 / Q-9 実測で確定）**:
 
@@ -821,7 +821,7 @@ interface ExtractionWarning {
 
 | ファイル | 書き手 | 読み手 | 寿命 |
 |---|---|---|---|
-| `timeline-audio-metadata.json` | extract-audio.cs（atomic write） | metadata/load | endSession まで（デバッグ時保持） |
+| `timeline-audio-metadata.<sceneName>.json` | extract-audio.cs（atomic write） | metadata/load | endSession まで（デバッグ時保持）。**Scene 名で名前空間を分ける**: バッチは全 Scene に同一のセッションディレクトリを渡すため、固定名だと次の Scene の抽出が前の Scene のファイルを上書きし、11.3 で保持されるはずの調査用 JSON が最後の Scene 分しか残らない |
 | `audio-mix.filter` | ffmpeg/filter-graph | ffmpeg プロセス | 同上 |
 | `ffmpeg-<format>.log` | ffmpeg/run（デバッグ時のみ） | ユーザー | 同上 |
 

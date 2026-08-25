@@ -12,6 +12,25 @@ import {
 
 export const AUDIO_METADATA_FILE_NAME = "timeline-audio-metadata.json";
 
+/**
+ * Scene ごとにメタデータファイルを分離する。バッチは全 Scene に同一の
+ * セッションディレクトリを渡すため、固定名だと次の Scene の抽出が前の Scene の
+ * ファイルを上書きし、デバッグモードで保持されるはずの調査用 JSON が最後の
+ * Scene 分しか残らない（11.3）。
+ */
+export function audioMetadataFileName(sceneName: string): string {
+	// Scene 名はユーザー入力なので、パス区切りや Windows で使えない文字を落とす。
+	// `-` は文字範囲と解釈されないよう先頭に置く。曖昧な位置に書くと
+	// フォーマッタの自動修正で別の文字クラスへ書き換えられ、意図が静かに変わる。
+	const safe = sceneName
+		.replace(/[-<>:"/\\|?*\s]/g, "_")
+		.replace(/\.+$/, "")
+		.slice(0, 80);
+	return safe.length > 0
+		? `timeline-audio-metadata.${safe}.json`
+		: AUDIO_METADATA_FILE_NAME;
+}
+
 export type MetadataLoadError =
 	| {
 			readonly kind: "not-found";

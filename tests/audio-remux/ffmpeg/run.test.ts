@@ -34,6 +34,8 @@ function request(
 		ffmpegPath: process.execPath,
 		videoPath: join(root, "silent.mp4"),
 		outputTmpPath: join(root, "output.audiotmp.mp4"),
+		// 補助ファイルは成果物ディレクトリではなくセッション側へ置く
+		sessionDir: join(root, "session"),
 		graph: {
 			script: "[0:a]anull[mix]",
 			inputArgs: ["-i", join(root, "audio.wav")],
@@ -82,9 +84,10 @@ describe("runMux", () => {
 				join(root, "output.audiotmp.mp4"),
 			]),
 		);
-		expect(await readFile(join(root, "audio-mix.filter"), "utf8")).toBe(
-			"[0:a]anull[mix]",
-		);
+		// 補助ファイルは成果物ディレクトリではなく sessionDir 側に置かれる
+		expect(
+			await readFile(join(root, "session", "audio-mix.filter"), "utf8"),
+		).toBe("[0:a]anull[mix]");
 	});
 
 	it("classifies nonzero exits and includes the stderr tail", async () => {
@@ -120,9 +123,9 @@ describe("runMux", () => {
 		expect(
 			logs.some((message) => message.includes("-filter_complex_script")),
 		).toBe(true);
-		expect(await readFile(join(root, "ffmpeg-mp4.log"), "utf8")).toContain(
-			"-c:v copy",
-		);
+		expect(
+			await readFile(join(root, "session", "ffmpeg-mp4.log"), "utf8"),
+		).toContain("-c:v copy");
 	});
 
 	it("kills a process that exceeds the configured timeout", async () => {

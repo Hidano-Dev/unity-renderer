@@ -2,7 +2,42 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadAudioTimelineMetadata } from "../../../src/audio-remux/metadata/load.js";
+import {
+	audioMetadataFileName,
+	loadAudioTimelineMetadata,
+} from "../../../src/audio-remux/metadata/load.js";
+
+// バッチは全 Scene に同じセッションディレクトリを渡すため、固定名だと次の Scene の
+// 抽出が前の Scene のメタデータを File.Replace で上書きし、デバッグ時に保持される
+// はずの調査用 JSON が最後の Scene 分しか残らない（11.3）。
+describe("audioMetadataFileName", () => {
+	it("namespaces the file per scene", () => {
+		expect(audioMetadataFileName("Intro")).toBe(
+			"timeline-audio-metadata.Intro.json",
+		);
+		expect(audioMetadataFileName("Intro")).not.toBe(
+			audioMetadataFileName("Outro"),
+		);
+	});
+
+	it("strips characters that are not usable in a Windows file name", () => {
+		const name = audioMetadataFileName('Scenes/Sub\\A:B*?"<>| ');
+		// Scene 名はユーザー入力なので、パス区切りや予約文字が残ると
+		// セッションディレクトリの外へ書き出しうる。
+		expect(name).not.toMatch(/[<>:"/\\|?*]/);
+		expect(name.startsWith("timeline-audio-metadata.")).toBe(true);
+		expect(name.endsWith(".json")).toBe(true);
+	});
+
+	it("keeps the name bounded for very long scene names", () => {
+		const name = audioMetadataFileName("S".repeat(500));
+		expect(name.length).toBeLessThanOrEqual(120);
+	});
+
+	it("falls back to the default name when nothing usable remains", () => {
+		expect(audioMetadataFileName("")).toBe("timeline-audio-metadata.json");
+	});
+});
 
 const directories: string[] = [];
 afterEach(async () => {
