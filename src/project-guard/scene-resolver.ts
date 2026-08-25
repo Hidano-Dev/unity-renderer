@@ -20,7 +20,7 @@ export interface SceneResolutionError {
 	readonly details: readonly SceneResolutionDetail[];
 }
 
-interface SceneFile {
+export interface SceneFile {
 	readonly sceneName: string;
 	readonly assetPath: string;
 }
@@ -52,20 +52,30 @@ async function findSceneFiles(
 	return files;
 }
 
+/**
+ * Scan the project's `Assets` tree once and return every `.unity` file found.
+ * 存在しない `Assets` は「Scene が 1 つも無い」として扱う(GUI の一覧表示と
+ * `resolveScenes` の双方が同じ走査結果を見るために共有する)。
+ */
+export async function listSceneFiles(
+	projectPath: string,
+): Promise<readonly SceneFile[]> {
+	const resolvedProjectPath = path.resolve(projectPath);
+	const assetsPath = path.join(resolvedProjectPath, "Assets");
+	try {
+		return await findSceneFiles(assetsPath, resolvedProjectPath);
+	} catch (cause) {
+		if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+		return [];
+	}
+}
+
 /** Resolve all configured Scene names in one Assets-tree scan. */
 export async function resolveScenes(
 	projectPath: string,
 	names: readonly string[],
 ): Promise<Result<readonly ResolvedScene[], SceneResolutionError>> {
-	const resolvedProjectPath = path.resolve(projectPath);
-	const assetsPath = path.join(resolvedProjectPath, "Assets");
-	let sceneFiles: SceneFile[];
-	try {
-		sceneFiles = await findSceneFiles(assetsPath, resolvedProjectPath);
-	} catch (cause) {
-		if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-		sceneFiles = [];
-	}
+	const sceneFiles = await listSceneFiles(projectPath);
 
 	const missing: SceneResolutionDetail[] = [];
 	const ambiguous: SceneResolutionDetail[] = [];

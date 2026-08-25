@@ -1,15 +1,11 @@
 import { Command } from "commander";
-import { createAudioRemuxHooks } from "../audio-remux/index.js";
-import { createHookRegistry } from "../hooks/registry.js";
 import { runCheck } from "./check.js";
+import { createCompositionHooks } from "./composition.js";
+import { runGui } from "./gui.js";
 import { runInit } from "./init.js";
 import { runRender } from "./render.js";
 
-export function createCompositionHooks() {
-	const registry = createHookRegistry();
-	registry.register(createAudioRemuxHooks());
-	return registry.current[0];
-}
+export { createCompositionHooks } from "./composition.js";
 
 /** @impl URC-15.1 */
 export function createCli(): Command {
@@ -40,6 +36,17 @@ export function createCli(): Command {
 				process.exitCode = await runInit(output, options);
 			},
 		);
+	program
+		.command("gui")
+		.description("Open the Scene selection window in the default browser")
+		.option("--no-open", "start the local server without opening a browser")
+		.option("--port <port>", "listen on a fixed port instead of a free one")
+		.action(async (options: { open?: boolean; port?: string }) => {
+			process.exitCode = await runGui({
+				openBrowser: options.open !== false,
+				port: options.port === undefined ? undefined : Number(options.port),
+			});
+		});
 	return program;
 }
 
