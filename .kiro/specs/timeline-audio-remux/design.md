@@ -120,7 +120,8 @@ graph TB
 
 **Architecture Integration**:
 
-- 選択パターン: core のレイヤード + 合成ルート登録をそのまま踏襲。`audio-remux` 内部はフェーズ順（抽出 → 検証 → 計画 → 取得 → 実行 → 確定）のパイプラインとする
+- 選択パターン: core のレイヤード + 合成ルート登録をそのまま踏襲。`audio-remux` 内部はフェーズ順（抽出 → 検証 → **取得 → 音源長 probe** → 計画 → 実行 → 確定）のパイプラインとする
+  - **取得が計画より前にある理由**: 音源長の確定に ffmpeg 同梱の ffprobe が要るため。ただし「音声トラックが 1 つも無いのに 146 MB を取得する」ことがないよう、取得の前に metadata 段階の安価な前判定（非ミュートクリップが 1 件以上あるか）を置く。前判定を通ったのちイン/アウト点の絞り込みで計画が空になった場合は取得済みのまま mux をスキップする（稀・許容）
 - ドメイン境界: 「Editor 内で実行する処理（抽出のみ・読み取り専用）」と「Editor 非依存の処理（ffmpeg 一式）」を厳密に分離する。`evalCSharp` を触るのは `extract/` のみ（6.5 / 8.4）
 - 責務分離: 時間正規化の前半（祖先 timeScale 累積によるルート時刻換算・可視窓クランプ）は C# 側、後半（イン/アウト・ループ・シーク位置の ffmpeg 配置計算）は TS 側で行う。境界は音声メタデータ JSON スキーマ（後述）で固定する
 - Steering 準拠: artgraph トレーサビリティ規約（`TAR-N.M` タグ）に従う（Testing Strategy 参照）
@@ -288,7 +289,7 @@ flowchart TD
 
 | Field | Detail |
 |-------|--------|
-| Intent | `RenderHooks.afterRecording` 実装。抽出 → 検証 → 計画 → 取得 → mux → 確定のフェーズ駆動と失敗の構造化 |
+| Intent | `RenderHooks.afterRecording` 実装。抽出 → 検証 → 取得 → 音源長 probe → 計画 → mux → 確定のフェーズ駆動と失敗の構造化 |
 | Requirements | 8.1, 8.2, 8.3, 8.5, 8.6, 9.2, 9.4, 10.5, 10.6, 11.2, 11.3 |
 
 **Responsibilities & Constraints**
@@ -408,7 +409,7 @@ interface ExtractService {
 | clipIn | `TimelineClip.clipIn` | — |
 | クリップ再生速度 | `TimelineClip.timeScale` | — |
 | ループ | `AudioPlayableAsset.loop` | クリップ長 > 音源長で折り返すことを実再生音で確認済み（Q-2） |
-| 音源長 | **ffprobe のデコード長を正とする** | `AudioClip.length` は **mp3 でエンコーダのパディングを含む**（2.0 s の音源が 2.0637 s）。参考値に留める（Q-5 実測） |
+| 音源長 | 抽出時は `AudioClip.length` を記録し、**計画の直前に ffprobe のデコード長で上書きする** | `AudioClip.length` は **mp3 でエンコーダのパディングを含む**（2.0 s の音源が 2.0637 s。Q-5 実測）。この値は非ループクリップの終端クランプに使われるため、実長より短く報告されると `atrim=end` が実音源の手前で切れて音が失われる。上書きは `ffmpeg/probe.ts` の `resolveSourceDurations`（音源パス単位で 1 回のみ問い合わせ） |
 | クリップ音量 | **`SerializedObject` の `m_ClipProperties.volume`** | 公開 API は**存在しない**。fallback を正式経路に昇格（Q-3 実測） |
 | トラック音量 | **`SerializedObject` の `m_TrackProperties.volume`** | 公開 API は**存在しない**。fallback を正式経路に昇格。値は `float` なので JSON には float 精度の double が出る（例 `0.20000000298023224`）。TS 側はこれを許容する（Q-4 実測） |
 | トラックミュート | **`TrackAsset.muted` + `TrackAsset.parent` を祖先方向に走査** | `mutedInHierarchy` 相当の公開 API は見当たらず、祖先手動走査を正式経路とする（Q-4 実測） |
@@ -729,10 +730,13 @@ interface MuxRunner {
 
 **Responsibilities & Constraints**
 
-- **配置方式（9.3 の決定）: 置き換え方式**。mux は同一ディレクトリの一時ファイル `<basename>.<ext>.audiotmp` へ出力し、検証（存在・サイズ > 0）後に元の無音映像を置き換える。最終成果物のファイル名は unity-render-core が確定した出力パス（Recorder ワイルドカード展開済み）と完全一致し、ユーザーは設定どおりのファイル名 1 つだけを見ればよい（一意識別。9.3）
+- **配置方式（9.3 の決定）: 置き換え方式**。mux は同一ディレクトリの一時ファイル `<basename>.<ext>.audiotmp.<ext>` へ出力し（**末尾の拡張子は必須**。ffmpeg は出力コンテナをファイル拡張子から判定するため、`.audiotmp` で終わる名前では `Unable to choose an output format` で mux 自体が失敗する。E2E 実測）、検証（存在・サイズ > 0）後に元の無音映像を置き換える。最終成果物のファイル名は unity-render-core が確定した出力パス（Recorder ワイルドカード展開済み）と完全一致し、ユーザーは設定どおりのファイル名 1 つだけを見ればよい（一意識別。9.3）
   - 採用理由: (a) 無音中間ファイルと最終成果物の取り違え（Requirement 9 Objective）を構造的に排除できる、(b) `RenderHandoff.videoPath` / core の成否一覧のパス表示・エクスプローラーリンクがそのまま最終成果物を指す、(c) ディスク使用量が別名保存の約半分で済む
   - 棄却案 — 別名保存（`<basename>.audio.<ext>`）: 無音版と最終版が常に並存し、どちらが最終かの識別をユーザーの知識に依存するため棄却
-- 置き換え手順: (1) mux → `.audiotmp`、(2) 検証、(3) デバッグモード時のみ元ファイルを `<basename>.noaudio.<ext>` へ rename して保持（11.3 の調査用途）、非デバッグ時は元ファイルを削除、(4) `.audiotmp` → 元ファイル名へ rename。手順 (2) 完了まで元の無音映像には一切触れないため、mux 失敗時の無音映像保全（10.4）が構造的に成立する。(3)–(4) 間のクラッシュ残骸（`.audiotmp`）は次回実行時に警告付きで報告する
+- 置き換え手順: (1) mux → `.audiotmp.<ext>`、(2) 検証、(3) デバッグモード時のみ元ファイルを `<basename>.noaudio.<ext>` へ rename して保持（11.3 の調査用途）、非デバッグ時は元ファイルを削除、(4) `.audiotmp` → 元ファイル名へ rename。手順 (2) 完了まで元の無音映像には一切触れないため、mux 失敗時の無音映像保全（10.4）が構造的に成立する。(3)–(4) 間のクラッシュ残骸は次回実行時に警告付きで報告する。対象は 2 種類:
+  - `<basename>.<ext>.audiotmp.<ext>` — mux 済みだが確定前に落ちた一時ファイル
+  - `.<basename>.<ext>.<pid>.<uuid>.replace-backup` — 手順 (3)–(4) の最中に落ちた退避ファイル。**これが残っている場合は最終成果物そのものが存在しない可能性があり、`.audiotmp` より深刻**
+  走査は当該 `videoPath` 由来の名前だけを対象とし、**削除はせず報告のみ**行う（core のワイルドカード削除禁止規約に準拠）。結果は `FinalizeResult.staleArtifacts` で返し、オーケストレータが warn する
 - 出力別独立性（9.2）: finalize は出力単位で完結し、MOV の失敗が確定済み MP4 に影響しない
 
 **Contracts**: Service [x]
@@ -745,6 +749,7 @@ interface FinalizeError { readonly kind: "verify-failed" | "replace-failed"; rea
 interface FinalizeResult {
   readonly finalPath: string;               // 置き換え後の最終成果物（= 元の映像パス）
   readonly silentBackupPath?: string;       // デバッグモード時のみ: 保持した無音版
+  readonly staleArtifacts: readonly string[]; // 前回実行の残骸（報告のみ・削除しない）
 }
 
 interface OutputFinalizer {

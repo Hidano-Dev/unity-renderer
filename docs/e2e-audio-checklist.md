@@ -129,8 +129,46 @@ powershell -File spike\timeline-audio\tools\analyze-wav.ps1 -Path <out.mov> -Ffm
 | 4 | filter graph の入力インデックスが 0 始まり | `[0:a]` が映像入力を指し `Stream specifier ':a' ... matches no streams` で mux 全滅 | `MUX_AUDIO_INPUT_OFFSET = 1` を導入し、退行検知のテストを追加 |
 | 5 | エラー詳細が `[object Object]` / 汎用メッセージ | 欠落した音源やクリップを特定できず 10.1 を満たさない | `detail()` が `{kind, issues}` を展開するよう修正し、ローダが抽出エラーを個別に引き継ぐよう変更 |
 
+## 6.3 追検証（validate-impl の指摘対応後）
+
+validate-impl の指摘を受けて音源長の ffprobe 確定と残骸報告を実装し、同じ環境で再実行した。
+
+### 音源長の ffprobe 上書き
+
+`phase=probe` が `phase=ffmpeg-acquire` と `phase=mux` の間で実行されることを確認。ルートフィクスチャは .wav のみのため上書きログは出ない（= ffprobe と Unity の値が一致）。差が出る音源で測ると:
+
+| 音源 | ffprobe | Unity `AudioClip.length` | 差 |
+|---|---|---|---|
+| `click_48k_st_1s.wav` | 1.000000 | 1 | 0 |
+| `tone440_44k_st_2s.wav` | 2.000000 | 2 | 0 |
+| **`tone440_44k_st_2s.mp3`** | **2.000000** | **2.0636734962463379** | **−63.7 ms** |
+| `tone880_48k_mono_3s.ogg` | 3.000000 | 3 | 0 |
+
+非可逆音源だけが乖離し、ffprobe 側が実長を返す。この値で `sourceDurationSec` を上書きしてから計画するため、`atrim=end` のクランプが実音源に一致する。
+
+ffprobe が無い構成（manual に `ffmpeg.exe` だけを配置）では警告を出して Unity の申告値へフォールバックし、合成自体は成立することも確認した。
+
+```text
+WARN  [audio-remux] ffprobe not found next to ffmpeg; falling back to Unity-reported source lengths
+      (lossy sources may be clamped inaccurately)
+```
+
+### 置き換え残骸の報告
+
+出力ディレクトリに前回実行の退避ファイル `.AudioSpike.mp4.4242.deadbeef.replace-backup` を置いて実行:
+
+```text
+WARN  [audio-remux] leftover from an interrupted previous run:
+      ...\.AudioSpike.mp4.4242.deadbeef.replace-backup
+      (not deleted; remove it manually once you have checked it)
+```
+
+- 報告のみで**削除しない**ことを確認（実行後もファイルが 10 bytes のまま残存）
+- 今回の実行自身の `.audiotmp.<ext>` は残骸として報告されない
+- 別出力（`other.mov`）由来の残骸はこの出力に紐付けられない
+
 ## 既知の制約・残課題
 
 - **Unity Editor 実再生音との絶対位置差**: Recorder の音声収録では公称位置から −57〜+21 ms の再現性のあるずれが出る（スパイク Q-10）。発生源（Timeline の音声スケジューリング / Recorder の音声収録経路）は未切り分け。本チェックリストの判定は計画値基準のため影響しないが、「Editor で聞いた音」と最終成果物に体感差が出うる。切り分け手順は `spike/timeline-audio/README.md` の Q-10 節。
-- **置き換え途中のクラッシュ残骸の報告**: タスク 3.4 の「残骸を次回実行時に警告付きで報告する」は**未実装**。`finalizeOutput` は渡された一時パスのみを扱い、セッションディレクトリを走査しない。
+- **計画が空になる場合の ffmpeg 取得**: 音源長の確定に ffprobe が要るため、取得は計画より前に走る。ミュートのみの Scene は metadata 段階の前判定で止まるので取得は起きないが、**可聴クリップがイン/アウト点の外に全部落ちる**構成では取得だけ行って mux をスキップする。稀なケースとして許容している。
 - **`tests/integration/editor-session.test.ts` の環境依存**: 実 Unity Editor がポート 7800 で動いていると、フェイクではなく実 Editor の PID を拾って失敗する（本 Spec の変更前から同様）。E2E 実施中はこのテストが赤くなるため、Editor 終了後に再実行して確認すること。

@@ -35,6 +35,13 @@ export type FfmpegAcquireError = {
 };
 export type FfmpegBinary = {
 	readonly ffmpegPath: string;
+	/**
+	 * 同梱の ffprobe。音源長の確定に使う（design「音源長は ffprobe のデコード長を
+	 * 正とする」）。managed ビルドでは常に存在するが、manual エスケープハッチは
+	 * `manual\ffmpeg.exe` の存在だけを条件とする契約なので、ユーザーが ffprobe を
+	 * 置いていない場合は undefined になる。呼び出し側は degrade すること。
+	 */
+	readonly ffprobePath?: string;
 	readonly source: "managed" | "manual";
 };
 
@@ -223,6 +230,17 @@ export class FfmpegAcquireManager {
 		this.smokeTest = options.smokeTest ?? defaultSmoke;
 	}
 
+	/** ffprobe は同じ zip に同梱されるため常に ffmpeg.exe と同じディレクトリにある。 */
+	private async binaryFor(
+		ffmpegPath: string,
+		source: FfmpegBinary["source"],
+	): Promise<FfmpegBinary> {
+		const probePath = join(dirname(ffmpegPath), "ffprobe.exe");
+		return (await exists(probePath))
+			? { ffmpegPath, ffprobePath: probePath, source }
+			: { ffmpegPath, source };
+	}
+
 	public async ensureFfmpeg(): Promise<
 		Result<FfmpegBinary, FfmpegAcquireError>
 	> {
@@ -231,7 +249,7 @@ export class FfmpegAcquireManager {
 		if (await exists(manualPath)) {
 			try {
 				await this.smokeTest(manualPath);
-				return ok({ ffmpegPath: manualPath, source: "manual" });
+				return ok(await this.binaryFor(manualPath, "manual"));
 			} catch {
 				/* fall through to the pinned managed build */
 			}
@@ -244,7 +262,7 @@ export class FfmpegAcquireManager {
 		if (await exists(managedPath)) {
 			try {
 				await this.smokeTest(managedPath);
-				return ok({ ffmpegPath: managedPath, source: "managed" });
+				return ok(await this.binaryFor(managedPath, "managed"));
 			} catch {
 				await rm(managedDirectory, { recursive: true, force: true });
 			}
@@ -262,7 +280,7 @@ export class FfmpegAcquireManager {
 			if (await exists(managedPath)) {
 				try {
 					await this.smokeTest(managedPath);
-					return ok({ ffmpegPath: managedPath, source: "managed" });
+					return ok(await this.binaryFor(managedPath, "managed"));
 				} catch {
 					await rm(managedDirectory, { recursive: true, force: true });
 				}
@@ -362,10 +380,12 @@ export class FfmpegAcquireManager {
 			);
 			await rm(archivePath, { force: true });
 			await rename(staging, managedDirectory);
-			return ok({
-				ffmpegPath: join(managedDirectory, this.manifest.archiveBinaryRelPath),
-				source: "managed",
-			});
+			return ok(
+				await this.binaryFor(
+					join(managedDirectory, this.manifest.archiveBinaryRelPath),
+					"managed",
+				),
+			);
 		} catch (cause) {
 			return failure(
 				classifyAcquireFailure(cause),

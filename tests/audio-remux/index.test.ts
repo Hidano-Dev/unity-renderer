@@ -9,11 +9,27 @@ import { err, ok } from "../../src/shared/types.js";
 const videoPath = "C:\\renders\\scene.mp4";
 const movPath = "C:\\renders\\scene.mov";
 
+const audibleClip: AudioTimelineMetadata["clips"][number] = {
+	id: "clip-1",
+	trackPath: "A_Track",
+	sourcePath: "C:\\audio\\clip.wav",
+	sourceSampleRate: 48000,
+	sourceDurationSec: 1,
+	rootStartSec: 0,
+	rootEndSec: 1,
+	clipInSec: 0,
+	effectiveSpeed: 1,
+	clipVolume: 1,
+	trackVolume: 1,
+	trackMuted: false,
+	loop: false,
+};
+
 const metadata: AudioTimelineMetadata = {
 	schemaVersion: 1,
 	sceneName: "Scene",
 	extractedAt: "2026-08-23T00:00:00.000Z",
-	clips: [],
+	clips: [audibleClip],
 	errors: [],
 	warnings: [],
 };
@@ -63,16 +79,28 @@ function baseDeps(overrides: Partial<AudioRemuxDeps> = {}): AudioRemuxDeps {
 			loadAndValidate: vi.fn(async () => ok(metadata)),
 		},
 		planner: { buildMixPlan: vi.fn(() => planWithClip) },
+		durationResolver: {
+			resolveDurations: vi.fn(async () => ({
+				durations: new Map<string, number>(),
+				unresolved: [],
+			})),
+		},
 		ffmpegProvider: {
 			ensureFfmpeg: vi.fn(async () =>
-				ok({ ffmpegPath: "fake-ffmpeg", source: "manual" as const }),
+				ok({
+					ffmpegPath: "fake-ffmpeg",
+					ffprobePath: "fake-ffprobe",
+					source: "manual" as const,
+				}),
 			),
 		},
 		muxRunner: {
 			runMux: vi.fn(async () => ok(undefined)),
 		},
 		finalizer: {
-			finalizeOutput: vi.fn(async () => ok({ finalPath: videoPath })),
+			finalizeOutput: vi.fn(async () =>
+				ok({ finalPath: videoPath, staleArtifacts: [] as string[] }),
+			),
 		},
 		...overrides,
 	};
@@ -116,6 +144,30 @@ describe("createAudioRemuxHooks", () => {
 		);
 	});
 
+	// ffprobe による音源長確定のため取得は計画より前に走る。そのぶん「音声トラックが
+	// 1 つも無いのに 146 MB を落とす」ことがないよう、metadata 段階の前判定で止める。
+	it("skips ffmpeg acquisition entirely when every track is muted", async () => {
+		const deps = baseDeps({
+			metadataLoader: {
+				loadAndValidate: vi.fn(async () =>
+					ok({
+						...metadata,
+						clips: [{ ...audibleClip, trackMuted: true }],
+					}),
+				),
+			},
+		});
+		const ctx = context();
+
+		await expect(hook(deps)(ctx)).resolves.toBeUndefined();
+		expect(deps.ffmpegProvider.ensureFfmpeg).not.toHaveBeenCalled();
+		expect(deps.planner.buildMixPlan).not.toHaveBeenCalled();
+		expect(deps.muxRunner.runMux).not.toHaveBeenCalled();
+		expect(ctx.logger.warn).toHaveBeenCalledWith(
+			"[audio-remux] no audio clips; keeping silent video as the final output",
+		);
+	});
+
 	it("skips muxing when the mix plan has no clips and reports a warning", async () => {
 		const deps = baseDeps({
 			planner: { buildMixPlan: vi.fn(() => ({ ...planWithClip, clips: [] })) },
@@ -123,11 +175,63 @@ describe("createAudioRemuxHooks", () => {
 		const ctx = context();
 
 		await expect(hook(deps)(ctx)).resolves.toBeUndefined();
-		expect(deps.ffmpegProvider.ensureFfmpeg).not.toHaveBeenCalled();
+		// metadata に可聴クリップがある以上、計画が空になると判るのは取得の後。
+		// この経路では ffmpeg を取得済みだが mux は行わない。
+		expect(deps.ffmpegProvider.ensureFfmpeg).toHaveBeenCalled();
 		expect(deps.muxRunner.runMux).not.toHaveBeenCalled();
 		expect(deps.finalizer.finalizeOutput).not.toHaveBeenCalled();
 		expect(ctx.logger.warn).toHaveBeenCalledWith(
 			"[audio-remux] no audio clips; keeping silent video as the final output",
+		);
+	});
+
+	it("replaces Unity-reported source lengths with the ffprobe values before planning", async () => {
+		const resolveDurations = vi.fn(async () => ({
+			durations: new Map([["C:\\audio\\clip.wav", 2.5]]),
+			unresolved: [],
+		}));
+		// The parameter is only declared so mock.calls is typed; the plan is fixed.
+		const buildMixPlan = vi.fn(
+			(_forPlan: AudioTimelineMetadata) => planWithClip,
+		);
+		const deps = baseDeps({
+			durationResolver: { resolveDurations },
+			planner: { buildMixPlan },
+		});
+
+		await hook(deps)(context());
+
+		expect(resolveDurations).toHaveBeenCalledWith("fake-ffprobe", [
+			"C:\\audio\\clip.wav",
+		]);
+		expect(buildMixPlan.mock.calls[0]?.[0].clips[0]?.sourceDurationSec).toBe(
+			2.5,
+		);
+	});
+
+	it("falls back to the Unity-reported lengths when ffprobe is unavailable", async () => {
+		const resolveDurations = vi.fn();
+		// The parameter is only declared so mock.calls is typed; the plan is fixed.
+		const buildMixPlan = vi.fn(
+			(_forPlan: AudioTimelineMetadata) => planWithClip,
+		);
+		const deps = baseDeps({
+			durationResolver: { resolveDurations },
+			planner: { buildMixPlan },
+			ffmpegProvider: {
+				ensureFfmpeg: vi.fn(async () =>
+					ok({ ffmpegPath: "fake-ffmpeg", source: "manual" as const }),
+				),
+			},
+		});
+		const ctx = context();
+
+		await hook(deps)(ctx);
+
+		expect(resolveDurations).not.toHaveBeenCalled();
+		expect(buildMixPlan.mock.calls[0]?.[0].clips[0]?.sourceDurationSec).toBe(1);
+		expect(ctx.logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining("ffprobe not found"),
 		);
 	});
 

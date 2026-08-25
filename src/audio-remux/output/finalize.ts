@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, rename, rm, stat } from "node:fs/promises";
+import { access, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import { err, ok, type Result } from "../../shared/types.js";
 
@@ -12,6 +12,13 @@ export type FinalizeError =
 export interface FinalizeResult {
 	readonly finalPath: string;
 	readonly silentBackupPath?: string;
+	/**
+	 * 前回実行が置き換えの途中で落ちた痕跡（design「(3)–(4) 間のクラッシュ残骸は
+	 * 次回実行時に警告付きで報告する」）。削除はせず報告のみ行う。core の
+	 * ワイルドカード削除禁止規約に従い、自分が生成したと確証できないファイルには
+	 * 触れない。
+	 */
+	readonly staleArtifacts: readonly string[];
 }
 
 export interface OutputFinalizer {
@@ -25,6 +32,39 @@ export interface OutputFinalizer {
 function silentBackupPath(videoPath: string): string {
 	const parsed = parse(videoPath);
 	return join(parsed.dir, `${parsed.name}.noaudio${parsed.ext}`);
+}
+
+/**
+ * この出力に対応する前回実行の残骸だけを列挙する。2 種類ある:
+ *
+ * - `<base>.audiotmp<ext>` — mux 済みだが確定前に落ちた一時ファイル
+ * - `.<base>.<pid>.<uuid>.replace-backup` — 置き換えの最中に落ちた退避ファイル。
+ *   こちらが残っていると最終成果物そのものが存在しない可能性があり、
+ *   `.audiotmp` より深刻なので必ず報告する
+ *
+ * 出力ディレクトリ全体ではなく `videoPath` 由来の名前だけを対象にする。
+ */
+async function findStaleArtifacts(videoPath: string): Promise<string[]> {
+	const parsed = parse(videoPath);
+	const tmpName = `${parsed.base}.audiotmp${parsed.ext}`;
+	const rollbackPrefix = `.${parsed.base}.`;
+	const rollbackSuffix = ".replace-backup";
+
+	let entries: string[];
+	try {
+		entries = await readdir(parsed.dir);
+	} catch {
+		return [];
+	}
+
+	return entries
+		.filter(
+			(entry) =>
+				entry === tmpName ||
+				(entry.startsWith(rollbackPrefix) && entry.endsWith(rollbackSuffix)),
+		)
+		.sort()
+		.map((entry) => join(parsed.dir, entry));
 }
 
 async function isNonEmptyFile(path: string): Promise<boolean> {
@@ -59,6 +99,12 @@ export async function finalizeOutput(
 	muxedTmpPath: string,
 	debug: boolean,
 ): Promise<Result<FinalizeResult, FinalizeError>> {
+	// 走査は自分の一時ファイルを消費する前に行う。確定後に走査すると、今回の
+	// 出力自身を「残骸」として報告してしまう。
+	const staleArtifacts = (await findStaleArtifacts(videoPath)).filter(
+		(path) => path !== muxedTmpPath,
+	);
+
 	if (!(await isNonEmptyFile(muxedTmpPath)))
 		return err({
 			kind: "verify-failed",
@@ -98,6 +144,7 @@ export async function finalizeOutput(
 
 		return ok({
 			finalPath: videoPath,
+			staleArtifacts,
 			...(backupPath && { silentBackupPath: backupPath }),
 		});
 	} catch (cause) {

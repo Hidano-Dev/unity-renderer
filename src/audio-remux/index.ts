@@ -10,11 +10,16 @@ import {
 	type FfmpegBinary,
 } from "./ffmpeg/acquire.js";
 import { buildFilterGraph } from "./ffmpeg/filter-graph.js";
+import {
+	type SourceDurationResolver,
+	sourceDurationResolver,
+} from "./ffmpeg/probe.js";
 import { DefaultMuxRunner, type MuxRunner } from "./ffmpeg/run.js";
 import {
 	AUDIO_METADATA_FILE_NAME,
 	loadAudioTimelineMetadata,
 } from "./metadata/load.js";
+import type { AudioTimelineMetadata } from "./metadata/schema.js";
 import {
 	DefaultOutputFinalizer,
 	type OutputFinalizer,
@@ -38,6 +43,7 @@ export interface AudioRemuxDeps {
 	readonly metadataLoader: MetadataLoader;
 	readonly planner: MixPlanner;
 	readonly ffmpegProvider: FfmpegProvider;
+	readonly durationResolver: SourceDurationResolver;
 	readonly muxRunner: MuxRunner;
 	readonly finalizer: OutputFinalizer;
 }
@@ -49,6 +55,7 @@ const defaultDeps: AudioRemuxDeps = {
 	},
 	planner: { buildMixPlan },
 	ffmpegProvider: createFfmpegAcquireManager(),
+	durationResolver: sourceDurationResolver,
 	muxRunner: new DefaultMuxRunner(),
 	finalizer: new DefaultOutputFinalizer(),
 };
@@ -110,6 +117,50 @@ function throwFailure(
 	});
 }
 
+/**
+ * 音源長を ffprobe の実デコード長で上書きする。ffprobe が使えない場合
+ * （manual 配置で ffmpeg.exe だけを置いた構成）は Unity の申告値のまま進め、
+ * 警告だけを出す。合成そのものは成立するため、ここで失敗にはしない。
+ */
+async function withProbedDurations(
+	ctx: HookContext,
+	metadata: AudioTimelineMetadata,
+	audible: readonly AudioTimelineMetadata["clips"][number][],
+	ffprobePath: string | undefined,
+	resolver: SourceDurationResolver,
+): Promise<AudioTimelineMetadata> {
+	if (!ffprobePath) {
+		ctx.logger.warn(
+			"[audio-remux] ffprobe not found next to ffmpeg; falling back to Unity-reported source lengths (lossy sources may be clamped inaccurately)",
+		);
+		return metadata;
+	}
+
+	const { durations, unresolved } = await resolver.resolveDurations(
+		ffprobePath,
+		audible.map((clip) => clip.sourcePath),
+	);
+	for (const entry of unresolved) {
+		ctx.logger.warn(
+			`[audio-remux] ffprobe could not read ${entry.sourcePath}; using the Unity-reported length (${entry.reason})`,
+		);
+	}
+	if (durations.size === 0) return metadata;
+
+	return {
+		...metadata,
+		clips: metadata.clips.map((clip) => {
+			const probed = durations.get(clip.sourcePath);
+			if (probed === undefined || probed === clip.sourceDurationSec)
+				return clip;
+			ctx.logger.debug(
+				`[audio-remux] source length ${clip.sourcePath}: unity=${clip.sourceDurationSec} ffprobe=${probed}`,
+			);
+			return { ...clip, sourceDurationSec: probed };
+		}),
+	};
+}
+
 async function runAfterRecording(
 	ctx: HookContext,
 	deps: AudioRemuxDeps,
@@ -132,8 +183,12 @@ async function runAfterRecording(
 		);
 	}
 
-	const plan = deps.planner.buildMixPlan(metadata.value, ctx.handoff);
-	if (plan.clips.length === 0) {
+	// 計画より先に ffmpeg を取得する（音源長の確定に同梱の ffprobe が要るため）。
+	// ただし「音声トラックが 1 つも無ければ 146 MB を取得しない」短絡は守る必要が
+	// あるので、ここで安価な前判定を挟む。ミュートされていないクリップが 1 件も
+	// 無ければ計画は必ず空になる。
+	const audible = metadata.value.clips.filter((clip) => !clip.trackMuted);
+	if (audible.length === 0) {
 		ctx.logger.warn(
 			"[audio-remux] no audio clips; keeping silent video as the final output",
 		);
@@ -144,6 +199,23 @@ async function runAfterRecording(
 	const ffmpeg = await deps.ffmpegProvider.ensureFfmpeg();
 	if (!ffmpeg.ok)
 		throwFailure(ctx, "ffmpeg-acquire", detail(ffmpeg.error), outputs);
+
+	ctx.logger.debug("[audio-remux] phase=probe");
+	const metadataForPlan = await withProbedDurations(
+		ctx,
+		metadata.value,
+		audible,
+		ffmpeg.value.ffprobePath,
+		deps.durationResolver,
+	);
+
+	const plan = deps.planner.buildMixPlan(metadataForPlan, ctx.handoff);
+	if (plan.clips.length === 0) {
+		ctx.logger.warn(
+			"[audio-remux] no audio clips; keeping silent video as the final output",
+		);
+		return;
+	}
 
 	ctx.logger.debug("[audio-remux] phase=mux");
 	const statuses: OutputMuxStatus[] = [];
@@ -189,6 +261,11 @@ async function runAfterRecording(
 				errorDetail: detail(finalized.error),
 			});
 			continue;
+		}
+		for (const stale of finalized.value.staleArtifacts) {
+			ctx.logger.warn(
+				`[audio-remux] leftover from an interrupted previous run: ${stale} (not deleted; remove it manually once you have checked it)`,
+			);
 		}
 		statuses.push({
 			format: output.format,

@@ -57,19 +57,23 @@ aa5ff0d7bfc091f9a43d43f7af4a2174294edacf5cdc5fff031819a5eaa763c7
 ```
 
 1. ZIP を展開します。
-2. 展開先の `ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1\bin\ffmpeg.exe` を、次の manual ディレクトリへコピーします。
+2. 展開先の `ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1\bin\` から **`ffmpeg.exe` と `ffprobe.exe` の 2 つ**を、次の manual ディレクトリへコピーします。
 
    ```text
    %LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\ffmpeg.exe
+   %LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\ffprobe.exe
    ```
 
-   `%LOCALAPPDATA%` を展開した絶対パスは通常 `C:\Users\<ユーザー名>\AppData\Local\unity-render-core\tools\ffmpeg\manual\ffmpeg.exe` です。`manual` ディレクトリがなければ作成してください。
+   `%LOCALAPPDATA%` を展開した絶対パスは通常 `C:\Users\<ユーザー名>\AppData\Local\unity-render-core\tools\ffmpeg\manual\` 配下です。`manual` ディレクトリがなければ作成してください。
+
+   > `ffprobe.exe` は音源長を正確に求めるために使います。**無くても音声合成は動作します**が、その場合は Unity が申告する音源長へフォールバックする旨の警告が出ます。MP3 などの非可逆音源は Unity の申告値がエンコーダのパディングぶん実長とずれるため、可能な限り両方を配置してください。
 
 3. コピー後、実行確認を行います。
 
    ```powershell
-   $manual = Join-Path $env:LOCALAPPDATA "unity-render-core\tools\ffmpeg\manual\ffmpeg.exe"
-   & $manual -version
+   $manualDir = Join-Path $env:LOCALAPPDATA "unity-render-core\tools\ffmpeg\manual"
+   & (Join-Path $manualDir "ffmpeg.exe") -version
+   & (Join-Path $manualDir "ffprobe.exe") -version
    ```
 
 音声合成を再実行すると、ツールはこの manual 配置を managed build より先に検査し、`ffmpeg.exe -version` が成功した場合に使用します。manual 配置はユーザーが明示的に行う復旧経路のため、ZIP に同梱された `LICENSE.txt` も保持してください。manual 配置のバイナリについては `install-info.json` は自動生成されないため、上記の ZIP のサイズ・SHA-256 と `-version` の結果を確認記録として利用します。

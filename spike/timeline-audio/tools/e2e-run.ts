@@ -119,12 +119,23 @@ const ctx: HookContext = {
 	},
 };
 
+const { dirname } = await import("node:path");
+const { existsSync } = await import("node:fs");
+// ffprobe ships in the same bin directory; mirror what the real acquire
+// manager resolves so the probing phase is exercised for real.
+const ffprobeCandidate = join(dirname(ffmpegPath), "ffprobe.exe");
+const ffprobePath = existsSync(ffprobeCandidate) ? ffprobeCandidate : undefined;
+
 const hooks = createAudioRemuxHooks({
 	// Skip the download: the spike already fetched and verified this binary.
 	ffmpegProvider: {
 		ensureFfmpeg: async () => ({
 			ok: true as const,
-			value: { ffmpegPath, buildId: "spike-local", source: "managed" as never },
+			value: {
+				ffmpegPath,
+				...(ffprobePath ? { ffprobePath } : {}),
+				source: "managed" as const,
+			},
 		}),
 	},
 });
