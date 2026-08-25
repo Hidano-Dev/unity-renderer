@@ -32,15 +32,26 @@ function dependencies(hookError: unknown) {
 			state: "connected" as const,
 		},
 		pipeline: {
-			eval: vi.fn(async () => ({
+			eval: vi.fn(async (payload: { id: string }) => ({
 				ok: true as const,
 				value: {
-					returnValue: JSON.stringify({
-						directorFound: true,
-						directorName: "Director",
-						timelineDurationSec: 1,
-						timelineFrameRate: 30,
-					}),
+					returnValue:
+						payload.id === "recorder-tracks"
+							? JSON.stringify({
+									ok: true,
+									mode: "scan",
+									timelines: [],
+									removed: 0,
+									timelineDurationSec: 1,
+									timelineFrameRate: 30,
+									warnings: [],
+								})
+							: JSON.stringify({
+									directorFound: true,
+									directorName: "Director",
+									timelineDurationSec: 1,
+									timelineFrameRate: 30,
+								}),
 				},
 			})),
 		},

@@ -8,7 +8,11 @@ import {
 	type EditorSession,
 } from "../editor-session/session.js";
 import type { RenderHooks } from "../hooks/registry.js";
-import type { BackupSession, GuardError } from "../project-guard/backup.js";
+import {
+	type BackupSession,
+	type GuardError,
+	registerBackupFiles,
+} from "../project-guard/backup.js";
 import { restoreSession } from "../project-guard/recovery.js";
 import type { ResolvedScene } from "../project-guard/scene-resolver.js";
 import type { ProgressReporter } from "../reporting/progress.js";
@@ -52,6 +56,7 @@ export interface BatchRunnerDependencies {
 	readonly restore?: (
 		session: BackupSession,
 	) => Promise<Result<void, GuardError>>;
+	readonly registerBackupFiles?: typeof registerBackupFiles;
 }
 
 export interface BatchRunner {
@@ -123,12 +128,16 @@ export function createBatchRunner(
 			}));
 	const createJob = dependencies.createSceneJob ?? createSceneJob;
 	const restore = dependencies.restore ?? restoreSession;
+	const registerFiles = dependencies.registerBackupFiles ?? registerBackupFiles;
 
 	return {
 		async run(plan, hooks, reporter) {
 			const results: SceneResult[] = [];
 			let restoreSucceeded = false;
 			let liveEditorAbort = false;
+			// Scene ごとに Timeline アセットが積まれ得るため、復元はこの時点の
+			// セッションではなく、最後まで更新され続けたセッションに対して行う
+			let session = plan.session;
 
 			try {
 				for (const [index, scene] of plan.scenes.entries()) {
@@ -148,7 +157,7 @@ export function createBatchRunner(
 					// Editor の graceful 終了は quit-editor.cs の eval で行う(11.1)。
 					// unity open が返す PID はランチャーのもので Editor 本体には効かないため、
 					// プロセスシグナルではなく eval 経由で終了を要求する
-					const session = createSession({
+					const editorSession = createSession({
 						requestQuit: async () => {
 							const quit = await pipeline.eval(
 								compilePayload("quit-editor", {}),
@@ -181,10 +190,17 @@ export function createBatchRunner(
 							}
 						: undefined;
 					const job = createJob({
-						session,
+						session: editorSession,
 						pipeline,
 						hooks,
 						runHooks: hookRunner,
+						registerBackups: async (relativePaths) => {
+							const updated = await registerFiles(session, relativePaths);
+							if (!updated.ok)
+								return { ok: false as const, error: updated.error };
+							session = updated.value;
+							return { ok: true as const, value: undefined };
+						},
 						logger: {
 							warn: (message) => reporter?.warn(message),
 							debug: (message) => reporter?.debug(message),
@@ -201,9 +217,9 @@ export function createBatchRunner(
 					try {
 						result = await job.run(jobPlan);
 					} catch (cause) {
-						await session
+						await editorSession
 							.quit(plan.config.timeouts?.editorQuitSec ?? 60)
-							.catch(() => session.kill())
+							.catch(() => editorSession.kill())
 							.catch((killError) => reporter?.warn(String(killError)));
 						result = unexpectedSceneFailure(scene, cause);
 					}
@@ -231,13 +247,11 @@ export function createBatchRunner(
 						`生存中の Unity Editor と競合するため、パッケージ復元を行いませんでした。Editor (ポート 7800) を手動で終了してから再実行すると、未復元セッションが自動復旧されます: ${plan.session.sessionDirectory}`,
 					);
 				} else {
-					const restored = await restore(plan.session);
+					const restored = await restore(session);
 					restoreSucceeded = restored.ok;
 					reporter?.batchSummary({ scenes: results, restoreSucceeded });
 					if (!restored.ok)
-						reporter?.warn(
-							manualRecoveryGuidance(plan.session, restored.error),
-						);
+						reporter?.warn(manualRecoveryGuidance(session, restored.error));
 				}
 			}
 			return { scenes: results, restoreSucceeded };
