@@ -8,6 +8,7 @@ import {
 const handoff: RenderHandoff = {
 	sceneName: "Intro",
 	videoPath: "C:\\renders\\Intro.mp4",
+	videoFormat: "mp4",
 	additionalOutputs: [
 		{ format: "mov-prores", videoPath: "C:\\renders\\Intro.mov" },
 	],

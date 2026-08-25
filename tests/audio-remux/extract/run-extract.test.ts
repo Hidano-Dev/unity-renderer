@@ -16,6 +16,7 @@ async function createContext(
 		handoff: {
 			sceneName: "Assets/Main.unity",
 			videoPath: "C:\\render\\Main.mp4",
+			videoFormat: "mp4",
 			additionalOutputs: [],
 			effectiveFrameRate: 30,
 			inPoint: 0,

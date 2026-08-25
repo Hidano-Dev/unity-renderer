@@ -8,6 +8,12 @@ import type { Result } from "../shared/types.js";
 export interface RenderHandoff {
 	readonly sceneName: string;
 	readonly videoPath: string;
+	/**
+	 * `videoPath` のコンテナ形式。`formats` は順序自由で `["mov-prores", "mp4"]`
+	 * も有効なため、主出力が mp4 とは限らない。これが無いとフック側は主出力の
+	 * コーデックを決められない。
+	 */
+	readonly videoFormat: OutputFormat;
 	readonly additionalOutputs: readonly {
 		readonly format: OutputFormat;
 		readonly videoPath: string;

@@ -21,6 +21,9 @@ const extractionWarningSchema = z
 			"invalid-time-value",
 			"audio-clip-missing",
 			"clip-in-clamped",
+			// 祖先 ControlClip の可視窓と重ならないクリップの通常除外。
+			// エントリ自体を出さないため、追跡できるよう warning として残す。
+			"outside-visible-window",
 		]),
 		clipId: nonEmptyString,
 		detail: nonEmptyString,

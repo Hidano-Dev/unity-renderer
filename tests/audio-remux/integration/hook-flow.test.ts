@@ -52,6 +52,7 @@ async function fixture(clips: readonly object[]) {
 		handoff: {
 			sceneName: "Scene",
 			videoPath,
+			videoFormat: "mp4",
 			additionalOutputs: [],
 			effectiveFrameRate: 30,
 			inPoint: 0,

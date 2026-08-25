@@ -167,8 +167,22 @@ WARN  [audio-remux] leftover from an interrupted previous run:
 - 今回の実行自身の `.audiotmp.<ext>` は残骸として報告されない
 - 別出力（`other.mov`）由来の残骸はこの出力に紐付けられない
 
+## 6.4 追検証（PR #2 レビュー指摘の対応後）
+
+主フィクスチャ `AudioSpikeRoot` には祖先可視窓でクランプされるクリップが偶然 1 つも無く、クランプ経路を検証できていなかった。6.1 の同期精度ベースラインを崩さないよう、**専用フィクスチャ**を別途用意した（`tools/build-clamp-fixture.cs`）。
+
+構成: ControlClip を root 10.0 / duration 2.0 / **clipIn 1.0** に置くと、可視窓は root `[10.0, 12.0]`、子の時間原点は `offset' = 10.0 − 1.0 = 9.0`。
+
+| クリップ | 子ローカル | root 換算 | 期待 | 実測 |
+|---|---|---|---|---|
+| `ClipHeadClamped` | 0.0–3.0 | 9.0–12.0（**頭が 1.0 s クランプ**） | `rootStartSec 10` / **`clipInSec 1`** | `rootStartSec 10` / `rootEndSec 12` / **`clipInSec 1`** ✅ |
+| `ClipOutside` | 4.0–5.0 | 13.0–14.0（**可視窓外**） | エントリを出さず warning | **除外**、`outside-visible-window` warning、`errorCount: 0` ✅ |
+
+修正前の挙動: `ClipHeadClamped` は `clipInSec 0` のままで、ネストした音声内容が 1 秒ぶん後ろにずれていた。`ClipOutside` は `rootStartSec 13 > rootEndSec 12` のエントリを生成し、スキーマの `rootEndSec > rootStartSec` に反して **Scene 全体の音声合成が検証失敗**していた。
+
 ## 既知の制約・残課題
 
 - **Unity Editor 実再生音との絶対位置差**: Recorder の音声収録では公称位置から −57〜+21 ms の再現性のあるずれが出る（スパイク Q-10）。発生源（Timeline の音声スケジューリング / Recorder の音声収録経路）は未切り分け。本チェックリストの判定は計画値基準のため影響しないが、「Editor で聞いた音」と最終成果物に体感差が出うる。切り分け手順は `spike/timeline-audio/README.md` の Q-10 節。
 - **計画が空になる場合の ffmpeg 取得**: 音源長の確定に ffprobe が要るため、取得は計画より前に走る。ミュートのみの Scene は metadata 段階の前判定で止まるので取得は起きないが、**可聴クリップがイン/アウト点の外に全部落ちる**構成では取得だけ行って mux をスキップする。稀なケースとして許容している。
+- **`spike/` は tsconfig の対象外**: `spike/timeline-audio/tools/*.ts` は `tsc --noEmit` で型検査されない。実際に、抽出ペイロードの引数変更に追随できていない箇所が残り、E2E 実行時に初めて発覚した。これらのツールを触ったら必ず一度実行して確かめること。
 - **`tests/integration/editor-session.test.ts` の環境依存**: 実 Unity Editor がポート 7800 で動いていると、フェイクではなく実 Editor の PID を拾って失敗する（本 Spec の変更前から同様）。E2E 実施中はこのテストが赤くなるため、Editor 終了後に再実行して確認すること。

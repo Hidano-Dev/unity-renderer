@@ -11,16 +11,18 @@
 import { writeFileSync } from "node:fs";
 import { compileAudioExtractionPayload } from "../../../src/audio-remux/extract/payload.js";
 
-const [outFile, metadataFilePath, scenePath, sceneName] = process.argv.slice(2);
+// NOTE: spike/ is outside the tsconfig include, so these tools are not
+// typechecked by `tsc --noEmit`. Keep them in sync with the payload contract by
+// hand — a stale argument here silently produces a wrong payload.
+const [outFile, metadataFilePath, sceneName] = process.argv.slice(2);
 if (!outFile || !metadataFilePath) {
 	console.error(
-		"usage: e2e-emit-payload.ts <outFile> <metadataFilePath> [scenePath] [sceneName]",
+		"usage: e2e-emit-payload.ts <outFile> <metadataFilePath> [sceneName]",
 	);
 	process.exit(2);
 }
 
 const payload = compileAudioExtractionPayload({
-	scenePath: scenePath ?? "Assets/Scenes/AudioSpike.unity",
 	metadataFilePath,
 	sceneName: sceneName ?? "AudioSpike",
 });

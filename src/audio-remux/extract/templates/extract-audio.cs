@@ -192,6 +192,22 @@ walk = (timeline, owner, offset, speed, windowStart, windowEnd, depth, chain) =>
                     continue;
                 }
 
+                // 祖先 ControlClip の可視窓と重ならないクリップは通常除外する。
+                // エントリを出すと rootEndSec <= rootStartSec となり、受け側スキーマの
+                // `rootEndSec > rootStartSec` に反して Scene 全体の検証が失敗する。
+                if (visibleEnd <= visibleStart)
+                {
+                    warnings.Add("outside-visible-window: " + clipId + " does not overlap its ancestor visible window");
+                    continue;
+                }
+
+                // 可視窓で頭が削られた分だけ音源も進める。root 時刻 t での音源位置は
+                // clipIn + (t - rootStart) * effectiveSpeed なので、開始を visibleStart に
+                // 置き換えるなら clipIn も同じ換算で進めないと、ネストした Timeline の
+                // 音声内容が削られた時間分だけ後ろにずれる。
+                if (visibleStart > rootStart)
+                    clipIn += (visibleStart - rootStart) * effectiveSpeed;
+
                 var entry = new System.Text.StringBuilder();
                 entry.Append("{\"id\":"); AppendJsonString(entry, clipId);
                 entry.Append(",\"trackPath\":"); AppendJsonString(entry, trackPath);

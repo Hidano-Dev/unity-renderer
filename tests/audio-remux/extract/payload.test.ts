@@ -34,4 +34,32 @@ describe("audio extraction payload", () => {
 		expect(result.source).not.toContain("JsonUtility");
 		expect(result.source).not.toMatch(/^\s*using\s/m);
 	});
+
+	// The payload is C# executed inside Unity, so these are string checks; the
+	// behaviour itself is proven by the clamp fixture in the E2E checklist.
+	it("excludes clips that miss the ancestor visible window", () => {
+		const result = compileAudioExtractionPayload({
+			metadataFilePath: "C:\\session\\timeline-audio-metadata.json",
+			sceneName: "Main",
+		});
+
+		// Emitting such a clip yields rootEndSec <= rootStartSec, which fails the
+		// receiving schema and takes the whole scene's audio down with it.
+		expect(result.source).toContain("if (visibleEnd <= visibleStart)");
+		expect(result.source).toContain("outside-visible-window");
+	});
+
+	it("advances clipIn by the amount the visible window clamped off the head", () => {
+		const result = compileAudioExtractionPayload({
+			metadataFilePath: "C:\\session\\timeline-audio-metadata.json",
+			sceneName: "Main",
+		});
+
+		// Replacing the start with visibleStart while leaving clipIn untouched
+		// shifts the nested timeline's audio content by the clamped amount.
+		expect(result.source).toContain("if (visibleStart > rootStart)");
+		expect(result.source).toContain(
+			"clipIn += (visibleStart - rootStart) * effectiveSpeed;",
+		);
+	});
 });

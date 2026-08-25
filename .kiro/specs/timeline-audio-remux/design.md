@@ -415,6 +415,7 @@ interface ExtractService {
 | トラックミュート | **`TrackAsset.muted` + `TrackAsset.parent` を祖先方向に走査** | `mutedInHierarchy` 相当の公開 API は見当たらず、祖先手動走査を正式経路とする（Q-4 実測） |
 | 子 Timeline 解決 | `ControlPlayableAsset.sourceGameObject.Resolve(owner)` → `GetComponent<PlayableDirector>()` → `.playableAsset as TimelineAsset` | **eval コンテクストで動作する**。`owner` は各階層の PlayableDirector。解決不能時は**例外ではなく null** が返るので warning でスキップ（1.4 / Q-1 実測） |
 | ControlClip timeScale | `TimelineClip.timeScale`（ControlTrack 上のクリップ） | — |
+| 祖先可視窓のクランプ | `rootStartSec = max(rootStart, windowStart)` / `rootEndSec = min(rootEnd, windowEnd)` | **クランプで頭が削れた場合は `clipInSec` も `clipIn + (visibleStart − rootStart) × effectiveSpeed` へ進める**。開始時刻だけ置き換えると、ネストした Timeline の音声内容が削られた時間分ずれる。**可視窓と重ならないクリップ（`visibleEnd <= visibleStart`）はエントリを出さずに除外**し、`outside-visible-window` の warning を残す（エントリを出すとスキーマの `rootEndSec > rootStartSec` に反し、1 クリップで Scene 全体の検証が落ちる） |
 
 > **バージョン範囲**: 上表は Unity 6000.0.36f1 + com.unity.timeline 1.7.7 で実測した。`m_ClipProperties.volume` / `m_TrackProperties.volume` は公開 API ではないシリアライズ名のため、Timeline パッケージのメジャー更新時は再確認が必要。読み取りは「プロパティが見つからなければ既定 1.0 + warning」でフェイルソフトに実装する。
 
@@ -938,6 +939,18 @@ Requirement 12 の Timeline 固有検証スパイクは**実施済み**。全実
 | Q-11 | **成立** | `amix=normalize=0`（純粋な加算）。Unity との区間 RMS 一致 0.09〜0.11 dB。ゲインモデル（クリップ音量 × トラック音量、モノラル -3.01 dB）も一致。**同等性基準は区間 RMS ≤ 0.5 dB**（サンプル/ピーク一致は不可能） |
 
 **同等性がサンプル一致にならない理由（Q-11 実測）**: ①Unity の既定 AudioImporter は .wav でも Vorbis に再エンコードするため、Unity は非可逆デコード後の波形を鳴らし ffmpeg は元 PCM を読む ②Unity 自身の出力がラン間でサンプル一致しない（同一構成の 2 回収録で最大差 1.004 / RMS 差 -12.96 dBFS、880 Hz 成分が約 27 サンプル位相ずれ） ③ffmpeg のリサンプラは鋭い過渡音でオーバーシュートする（0.5 倍速のクリック列でピーク 1.166 / Unity 0.911）。
+
+### unity-render-core への変更（Modified Files）
+
+本 Spec のために core 側へ加えた変更。いずれも追加のみで既存フィールドのシェイプは変えていない。
+
+| ファイル | 変更 | 理由 |
+|---|---|---|
+| `src/hooks/registry.ts` | `RenderHandoff` に `videoFormat: OutputFormat` を追加 | `formats` は順序自由で `["mov-prores", "mp4"]` も有効。主出力のコンテナ形式が handoff に無いと、フック側が主出力のコーデックを決められず ProRes MOV へ AAC を混ぜてしまう |
+| `src/batch/scene-job.ts` | `videoFormat` を `outputs[0].format` から設定 | 同上 |
+| `src/cli/index.ts` / `src/cli/render.ts` | 音声フックの合成ルート登録と受け渡し | タスク 5.3。reporting 側の変更は不要だった |
+| `src/csharp-payloads/compile.ts` | プレースホルダ注入を汎用関数として export | タスク 4.1 |
+| `src/shared/paths.ts` | ツール管理ディレクトリの解決関数を追加 | タスク 4.1 |
 
 ## Supporting References
 

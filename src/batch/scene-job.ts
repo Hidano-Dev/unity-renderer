@@ -356,6 +356,8 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 				const handoff: RenderHandoff = {
 					sceneName: plan.scene.sceneName,
 					videoPath: outputs[0]?.path ?? "",
+					// formats は zod で min(1) を強制しているので必ず 1 つ以上ある
+					videoFormat: outputs[0]?.format ?? plan.config.formats[0] ?? "mp4",
 					additionalOutputs: outputs
 						.slice(1)
 						.map(({ format, path }) => ({ format, videoPath: path })),

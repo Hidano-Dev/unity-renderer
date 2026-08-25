@@ -6,6 +6,7 @@ import type { RenderHandoff } from "../../../src/hooks/registry.js";
 const handoff: RenderHandoff = {
 	sceneName: "scene",
 	videoPath: "video.mp4",
+	videoFormat: "mp4",
 	additionalOutputs: [],
 	effectiveFrameRate: 30,
 	inPoint: 10,

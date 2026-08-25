@@ -60,6 +60,7 @@ function context(): HookContext {
 		handoff: {
 			sceneName: "Scene",
 			videoPath,
+			videoFormat: "mp4",
 			additionalOutputs: [{ format: "mov-prores", videoPath: movPath }],
 			effectiveFrameRate: 30,
 			inPoint: 0,
@@ -142,6 +143,58 @@ describe("createAudioRemuxHooks", () => {
 			`${movPath}.audiotmp.mov`,
 			false,
 		);
+	});
+
+	// config の formats は順序自由で ["mov-prores"] や ["mov-prores", "mp4"] も有効。
+	// 主出力を mp4 と決め打ちすると ProRes MOV に AAC が混ぜられ、失敗時の出力
+	// ステータスも誤報になる。
+	it("uses the handoff's primary format instead of assuming mp4", async () => {
+		const deps = baseDeps();
+		const ctx = context();
+		const movPrimary: HookContext = {
+			...ctx,
+			handoff: {
+				...ctx.handoff,
+				videoPath: movPath,
+				videoFormat: "mov-prores",
+				additionalOutputs: [{ format: "mp4", videoPath }],
+			},
+		};
+
+		await hook(deps)(movPrimary);
+
+		const formats = (
+			deps.muxRunner.runMux as unknown as {
+				mock: { calls: [{ format: string }][] };
+			}
+		).mock.calls.map(([request]) => request.format);
+		expect(formats).toEqual(["mov-prores", "mp4"]);
+	});
+
+	it("labels the primary output with its real format when muxing fails", async () => {
+		const deps = baseDeps({
+			muxRunner: {
+				runMux: vi.fn(async () =>
+					err({ kind: "nonzero-exit" as const, stderrTail: "boom" }),
+				),
+			},
+		});
+		const ctx = context();
+		const movPrimary: HookContext = {
+			...ctx,
+			handoff: { ...ctx.handoff, videoFormat: "mov-prores" },
+		};
+
+		await expect(hook(deps)(movPrimary)).rejects.toMatchObject({
+			category: "mux",
+			outputs: expect.arrayContaining([
+				expect.objectContaining({
+					format: "mov-prores",
+					videoPath,
+					outcome: "failure",
+				}),
+			]),
+		});
 	});
 
 	// ffprobe による音源長確定のため取得は計画より前に走る。そのぶん「音声トラックが
@@ -301,8 +354,10 @@ describe("createAudioRemuxHooks", () => {
 
 		await expect(hook(deps)(context())).rejects.toMatchObject({
 			category: "mux",
+			// core の hook wrapper は message しか残さないため、出力別の成否が
+			// 文面に畳み込まれていること自体が契約の一部。
 			message:
-				"[audio-remux:mux] one or more outputs failed during audio muxing",
+				"[audio-remux:mux] one or more outputs failed during audio muxing: mp4=success, mov-prores=failure (MOV mux failed)",
 			preservedVideoPaths: [videoPath, movPath],
 			outputs: [
 				{ format: "mp4", videoPath, outcome: "success" },

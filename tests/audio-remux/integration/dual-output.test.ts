@@ -43,6 +43,7 @@ describe("audio remux dual-output integration", () => {
 			handoff: {
 				sceneName: "Scene",
 				videoPath: mp4,
+				videoFormat: "mp4",
 				additionalOutputs: [{ format: "mov-prores", videoPath: mov }],
 				effectiveFrameRate: 30,
 				inPoint: 0,

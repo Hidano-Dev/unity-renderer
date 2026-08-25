@@ -93,7 +93,11 @@ function detail(error: unknown): string {
 
 function outputsFor(ctx: HookContext): OutputMuxStatus[] {
 	return [
-		{ format: "mp4", videoPath: ctx.handoff.videoPath, outcome: "skipped" },
+		{
+			format: ctx.handoff.videoFormat,
+			videoPath: ctx.handoff.videoPath,
+			outcome: "skipped",
+		},
 		...ctx.handoff.additionalOutputs.map((output) => ({
 			format: output.format,
 			videoPath: output.videoPath,
@@ -220,7 +224,7 @@ async function runAfterRecording(
 	ctx.logger.debug("[audio-remux] phase=mux");
 	const statuses: OutputMuxStatus[] = [];
 	for (const output of [
-		{ format: "mp4" as const, videoPath: ctx.handoff.videoPath },
+		{ format: ctx.handoff.videoFormat, videoPath: ctx.handoff.videoPath },
 		...ctx.handoff.additionalOutputs,
 	]) {
 		// ffmpeg infers the output container from the file extension, so the temp
@@ -273,13 +277,24 @@ async function runAfterRecording(
 			outcome: "success",
 		});
 	}
-	if (statuses.some((status) => status.outcome === "failure"))
+	if (statuses.some((status) => status.outcome === "failure")) {
+		// core の hook wrapper は例外を message だけに縮退させるため、出力別の
+		// 成否をここで文面に畳み込んでおかないと、成否一覧から「どの出力が音声付きで
+		// どれが無音のままか」が判別できなくなる。構造化情報は AudioRemuxHookError の
+		// outputs にも保持し続ける。
+		const summary = statuses
+			.map(
+				(status) =>
+					`${status.format}=${status.outcome}${status.errorDetail ? ` (${status.errorDetail})` : ""}`,
+			)
+			.join(", ");
 		throwFailure(
 			ctx,
 			"mux",
-			"one or more outputs failed during audio muxing",
+			`one or more outputs failed during audio muxing: ${summary}`,
 			statuses,
 		);
+	}
 }
 
 export function createAudioRemuxHooks(

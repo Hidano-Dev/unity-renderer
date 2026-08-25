@@ -103,6 +103,7 @@ const ctx: HookContext = {
 	handoff: {
 		sceneName: "AudioSpike",
 		videoPath: mp4Path,
+		videoFormat: "mp4",
 		additionalOutputs: movPath
 			? [{ format: "mov-prores" as const, videoPath: movPath }]
 			: [],
