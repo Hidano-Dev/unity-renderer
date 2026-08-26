@@ -30,6 +30,20 @@ describe("GUI page", () => {
 		expect(page).toContain('byId("sceneFilter").value = state.sceneFilter');
 	});
 
+	it("blocks runs while the scene list is being scanned", () => {
+		// 走査中に実行を許すと、collect() が新しい projectPath と前の
+		// プロジェクトで選んだ Scene 名を組み合わせてしまう
+		expect(page).toContain("var busy = running || scenesLoading;");
+		expect(page).toContain('byId("runRender").disabled = busy;');
+		expect(page).toContain("scenesLoading = true;");
+	});
+
+	it("drops the previous scene list when a new scan starts", () => {
+		expect(page).toContain("var requestId = (sceneRequest += 1);");
+		// 遅れて返った前の走査結果を現在状態へ代入しない
+		expect(page).toContain("if (requestId !== sceneRequest) return;");
+	});
+
 	it("keeps the token out of the markup except in the bootstrap script", () => {
 		expect(page).toContain('window.__GUI_TOKEN__ = "token-1";');
 		expect(page).not.toContain("token-1&");

@@ -110,6 +110,9 @@ var TOKEN = window.__GUI_TOKEN__;
 var scenes = [];
 var savedSelection = [];
 var scenesLoaded = false;
+var scenesLoading = false;
+// 走査の世代。応答が返ったときに最新の要求かどうかを見分ける
+var sceneRequest = 0;
 var running = false;
 var saveTimer = null;
 
@@ -233,6 +236,11 @@ function renderScenes() {
   list.textContent = "";
   var hint = byId("sceneHint");
 
+  if (scenesLoading) {
+    hint.textContent = "Scene を読み込んでいます…";
+    applySceneFilter();
+    return;
+  }
   if (!scenesLoaded) {
     hint.textContent = "Unity プロジェクトのフォルダを指定すると Scene を一覧します。";
     applySceneFilter();
@@ -294,26 +302,43 @@ function renderScenes() {
 
 function loadScenes() {
   var projectPath = byId("projectPath").value.trim();
+  var requestId = (sceneRequest += 1);
   if (projectPath === "") {
     scenes = [];
     scenesLoaded = false;
+    scenesLoading = false;
     renderScenes();
+    updateRunButtons();
     return Promise.resolve();
   }
-  byId("sceneHint").textContent = "Scene を読み込んでいます…";
+  // 走査中に実行を許すと、collect() が新しい projectPath と前のプロジェクトで
+  // 選んだ Scene 名を組み合わせる。同名 Scene があれば、利用者が選んでいない
+  // Scene を録画してしまうため、一覧を空にして実行を止める
+  scenes = [];
+  scenesLoaded = false;
+  scenesLoading = true;
+  renderScenes();
+  updateRunButtons();
   return api("/api/scenes", { method: "POST", body: JSON.stringify({ projectPath: projectPath }) })
     .then(function (body) {
+      // 遅れて届いた前の走査結果で今の一覧を上書きしない
+      if (requestId !== sceneRequest) return;
       scenes = body.scenes;
       scenesLoaded = true;
+      scenesLoading = false;
       renderScenes();
+      updateRunButtons();
       // 一覧に無い名前は落とし、表示と保存内容を一致させる
       savedSelection = checkedSceneNames();
       scheduleSave();
     })
     .catch(function (error) {
+      if (requestId !== sceneRequest) return;
       scenes = [];
       scenesLoaded = false;
+      scenesLoading = false;
       renderScenes();
+      updateRunButtons();
       byId("sceneHint").textContent = error.message;
     });
 }
@@ -344,13 +369,20 @@ function appendLog(line) {
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
 
+function updateRunButtons() {
+  // Scene 走査中も実行を禁じる。走査が終わるまで一覧と projectPath が
+  // 食い違っているため
+  var busy = running || scenesLoading;
+  byId("runCheck").disabled = busy;
+  byId("runRender").disabled = busy;
+  byId("reloadScenes").disabled = busy;
+  byId("pickProject").disabled = running;
+  byId("pickOutput").disabled = running;
+}
+
 function setRunning(value) {
   running = value;
-  byId("runCheck").disabled = value;
-  byId("runRender").disabled = value;
-  byId("pickProject").disabled = value;
-  byId("pickOutput").disabled = value;
-  byId("reloadScenes").disabled = value;
+  updateRunButtons();
 }
 
 function start(mode) {
