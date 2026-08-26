@@ -86,7 +86,7 @@ if (rootTimeline == null)
 
 var warnings = new System.Collections.Generic.List<string>();
 var entries = new System.Collections.Generic.List<string>();
-var visited = new System.Collections.Generic.HashSet<int>();
+var visited = new System.Collections.Generic.HashSet<string>();
 var removedCount = 0;
 
 var pending = new System.Collections.Generic.Queue<object[]>();
@@ -106,7 +106,13 @@ while (pending.Count > 0)
         continue;
     }
     // A ControlTrack can point back at an ancestor director; without this the walk loops.
-    if (!visited.Add(timeline.GetInstanceID()))
+    // The key includes the owner: several PlayableDirectors can share one TimelineAsset
+    // whose ExposedReferences resolve to different children per owner. Keying on the
+    // timeline alone would drop the second owner as a cycle and leave the RecorderTracks
+    // that are only reachable through it.
+    var visitKey = timeline.GetInstanceID().ToString() + ":" +
+        (owner == null ? "0" : owner.GetInstanceID().ToString());
+    if (!visited.Add(visitKey))
     {
         warnings.Add("nested-timeline-cycle: " + chain);
         continue;

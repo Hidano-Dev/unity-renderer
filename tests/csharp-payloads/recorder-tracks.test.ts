@@ -36,6 +36,17 @@ describe("recorder-tracks payload", () => {
 		expect(compiled).toContain("nested-timeline-too-deep");
 	});
 
+	it("keys the cycle guard by owner so a shared Timeline is walked per director", () => {
+		const compiled = source("scan");
+
+		// 同じ TimelineAsset を複数の Director が使い、ExposedReference が owner
+		// ごとに別の子へ解決される場合、timeline だけで既訪問を判定すると 2 つ目の
+		// owner を循環として捨て、その先の RecorderTrack が残る
+		expect(compiled).toContain("var visitKey = timeline.GetInstanceID()");
+		expect(compiled).toContain("owner.GetInstanceID()");
+		expect(compiled).toContain("visited.Add(visitKey)");
+	});
+
 	it("deletes tracks without ever saving the scene or the asset", () => {
 		const compiled = source("remove");
 
