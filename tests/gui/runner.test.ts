@@ -169,6 +169,41 @@ describe("GuiRunner", () => {
 		expect(runner.running).toBe(false);
 	});
 
+	it("rejects a second run that arrives while the config is still being written", async () => {
+		let releaseWrite = (): void => {};
+		const writeGate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		const writeConfig = vi.fn(
+			async (_configPath: string, _config: RenderConfig) => {
+				await writeGate;
+			},
+		);
+		const runCheck = vi.fn(async () => 0 as const);
+		const runner = new GuiRunner({
+			configPath: CONFIG_PATH,
+			writeConfig,
+			runCheck,
+		});
+		const { finished } = record(runner);
+
+		// 1 本目を await せずに 2 本目を投げる。設定の書き込み中もロックされて
+		// いないと、両方が同じ設定ファイルを上書きしたまま 2 本走ってしまう
+		const first = runner.start("check", ready, ["Main"]);
+		const second = await runner.start("check", ready, ["Other"]);
+
+		expect(second.ok).toBe(false);
+		if (!second.ok) expect(second.error[0]?.message).toContain("すでに実行中");
+
+		releaseWrite();
+		expect((await first).ok).toBe(true);
+		await finished;
+
+		expect(writeConfig).toHaveBeenCalledTimes(1);
+		expect(writeConfig.mock.calls[0]?.[1].scenes).toEqual(["Main"]);
+		expect(runCheck).toHaveBeenCalledTimes(1);
+	});
+
 	it("reports a config write failure without starting the run", async () => {
 		const runCheck = vi.fn();
 		const runner = new GuiRunner({
@@ -187,6 +222,9 @@ describe("GuiRunner", () => {
 				"設定ファイルを保存できませんでした",
 			);
 		expect(runCheck).not.toHaveBeenCalled();
+		// 書き込みに失敗した実行がロックを握ったままだと、以後どの実行も
+		// 「すでに実行中」で弾かれ続ける
+		expect(runner.running).toBe(false);
 	});
 
 	it("replays the backlog to a listener that connects late", async () => {

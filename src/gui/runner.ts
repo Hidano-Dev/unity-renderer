@@ -91,9 +91,17 @@ export class GuiRunner {
 			return err([
 				{ path: "$", message: "すでに実行中です。完了までお待ちください。" },
 			]);
+		// 設定ファイルの書き込みより後で立てると、その await の間に届いた 2 本目の
+		// 要求も上のガードを通り抜ける。両方が同じ設定ファイルを上書きしたまま
+		// 実行に入ると、先行実行が後続の設定を読み、固定ポート 7800 と対象
+		// プロジェクトを 2 つの Editor で奪い合う
+		this.#running = true;
 
 		const draft = buildRenderConfigDraft(state, selectedScenes);
-		if (!draft.ok) return draft;
+		if (!draft.ok) {
+			this.#running = false;
+			return draft;
+		}
 
 		const configPath = this.#deps.configPath;
 		try {
@@ -102,6 +110,7 @@ export class GuiRunner {
 				draft.value,
 			);
 		} catch (cause) {
+			this.#running = false;
 			return err([
 				{
 					path: "$",
@@ -110,7 +119,6 @@ export class GuiRunner {
 			]);
 		}
 
-		this.#running = true;
 		this.#backlog.length = 0;
 		this.#emit({ type: "started", mode });
 		this.log(`設定ファイル: ${configPath}`);
