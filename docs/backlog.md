@@ -46,6 +46,36 @@ BtbN の配布 zip はディレクトリエントリを含むため、この経�
 
 **確認すべきこと**: 設計意図がクリップ単位のスキップ＋警告なのか、Scene 失敗なのか。前者なら抽出側で当該クリップを除外して警告に降格する。後者なら想定どおりなので、エラーメッセージを「音声ファイルの実体を持たない参照」と分かる文言にする（現状の `clips.4.sourceDurationSec` では利用者が原因を特定できない）。
 
+## B-4. 作りたての取得ロックを横取りでき、CI が非決定的に落ちる
+
+**影響**: `tests/audio-remux/ffmpeg/acquire.test.ts:208`（"removes stale locks and serializes concurrent acquisition"）が**非決定的に失敗し、CI を赤にする**。同一コミット `b4c128e` で push の run は pass、pull_request の run は fail した。
+
+**発生箇所**: `src/audio-remux/ffmpeg/acquire.ts` の `acquireLock()` と `lockOwnerAlive()`
+
+```ts
+const handle = await open(lock, "wx");                       // ここでファイルは空のまま存在する
+await handle.writeFile(JSON.stringify({ pid: process.pid })); // 中身が入るのはこの後
+```
+
+```ts
+const record = JSON.parse(await readFile(path, "utf8"));  // 空文字なら throw
+...
+} catch { return false; }                                 // → 「保持者は死んでいる」と判定
+```
+
+`open(lock, "wx")` が解決してから PID が書かれるまでの間、ロックファイルは**存在するが空**。この隙間に別の取得側が読むと `JSON.parse("")` が投げ、`lockOwnerAlive()` が「死んでいる」を返す。待機側はロックを削除して自分で取り直すため、**2 つの取得が同時にロックを保持したと信じて `download()` へ進む**。
+
+先行側が `rename(staging, managedDirectory)` を終えた後、後続側の `rename` は既存ディレクトリへの rename となって Windows で失敗し、`failure()` が返る。これが `results.every((r) => r.ok)` を false にする。
+
+**プロセスを跨いでも起きる**。テスト固有の問題ではなく、B が A の作りたてのロックを横取りできる。
+
+**もう 1 つの衝突**: staging 名が `.staging-${process.pid}-${Date.now()}` で、**同一プロセス内の並行取得では pid が同じで `Date.now()` も一致し得る**ため、2 つの取得が同じ staging ディレクトリを共有し、先に終わった側の `finally` が後続の作業ディレクトリごと消す。
+
+**修正方針**:
+
+1. `lockOwnerAlive()` で「読めない・空」と「保持者なし」を区別する。空の場合は mtime を見て、猶予（数秒）内なら**生きているとみなす**。書き込み前に死んだプロセスのロックも猶予経過後に回収できる
+2. staging 名に `randomUUID()` を足して、同一プロセス内の並行取得でも衝突しないようにする
+
 ## B-3. BOM 付き `manifest.json` で原因不明のエラーになる
 
 **影響**: 軽微。Unity は BOM を付けないため通常は踏まない。
