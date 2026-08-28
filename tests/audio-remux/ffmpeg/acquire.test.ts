@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
 	FfmpegAcquireManager,
 	type FfmpegFetch,
 	type FfmpegSmokeTest,
+	lockOwnerAlive,
 } from "../../../src/audio-remux/ffmpeg/acquire.js";
 import { FFMPEG_MANIFEST } from "../../../src/audio-remux/ffmpeg/manifest.js";
 
@@ -169,6 +170,43 @@ describe("FfmpegAcquireManager", () => {
 			error: { kind: "smoke-test-failed" },
 		});
 		await rm(directory, { recursive: true, force: true });
+	});
+
+	it("does not steal a lock whose owner has not written its pid yet", async () => {
+		const directory = await setup();
+		const lock = join(directory, ".acquire.lock");
+		try {
+			// open(lock, "wx") が解決してから PID が書かれるまで、ファイルは
+			// 存在するが空。ここを stale と判定すると待機側が作りたてのロックを
+			// 消して取り直し、2 つの取得が同時に download() へ進む
+			await writeFile(lock, "");
+			expect(await lockOwnerAlive(lock)).toBe(true);
+
+			// 書き込み前に落ちた保持者は、猶予を過ぎれば回収できる
+			const stale = new Date(Date.now() - 60_000);
+			await utimes(lock, stale, stale);
+			expect(await lockOwnerAlive(lock)).toBe(false);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("reads the owner out of a written lock", async () => {
+		const directory = await setup();
+		const lock = join(directory, ".acquire.lock");
+		try {
+			await writeFile(lock, JSON.stringify({ pid: process.pid }));
+			expect(await lockOwnerAlive(lock)).toBe(true);
+
+			// PID を持たないロックは従来どおり即座に stale
+			await writeFile(lock, JSON.stringify({}));
+			expect(await lockOwnerAlive(lock)).toBe(false);
+
+			await rm(lock, { force: true });
+			expect(await lockOwnerAlive(lock)).toBe(false);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 
 	it("removes stale locks and serializes concurrent acquisition", async () => {

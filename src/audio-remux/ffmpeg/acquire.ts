@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
 	access,
@@ -8,6 +8,7 @@ import {
 	readFile,
 	rename,
 	rm,
+	stat,
 	writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -209,16 +210,54 @@ async function extractZip(
 	if (offset === 0) throw new Error("ZIP local header not found");
 }
 
-async function lockOwnerAlive(path: string): Promise<boolean> {
+/**
+ * PID を書き終える前のロックを「まだ書き込み中」とみなす猶予。書き込み前に
+ * 落ちたプロセスのロックも、この時間を過ぎれば回収できる。
+ */
+const LOCK_WRITE_GRACE_MS = 5_000;
+
+async function lockIsFresh(path: string): Promise<boolean> {
 	try {
-		const record = JSON.parse(await readFile(path, "utf8")) as { pid?: number };
-		if (!record.pid) return false;
-		try {
-			process.kill(record.pid, 0);
-			return true;
-		} catch {
-			return false;
-		}
+		const { mtimeMs } = await stat(path);
+		return Date.now() - mtimeMs < LOCK_WRITE_GRACE_MS;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * ロックの保持者が生きているか。
+ *
+ * `open(lock, "wx")` が解決してから PID が書かれるまでの間、ファイルは存在
+ * するが中身は空になる。ここで「読めない = 保持者は死んでいる」と即断すると、
+ * 待機側が作りたてのロックを消して取り直し、2 つの取得が同時にロックを
+ * 持ったつもりで download() へ進む。先行側が managedDirectory へ rename した
+ * 後、後続側の rename は既存ディレクトリ相手になって失敗する。
+ *
+ * そのため、中身が読めない場合は mtime を見て、猶予内なら生存とみなす。
+ * `{}` のように解析はできるが PID を持たないロックは、従来どおり即座に
+ * stale と判定する。
+ */
+export async function lockOwnerAlive(path: string): Promise<boolean> {
+	let raw: string;
+	try {
+		raw = await readFile(path, "utf8");
+	} catch {
+		// ロックが消えている。保持者はいない
+		return false;
+	}
+
+	let record: { pid?: number };
+	try {
+		record = JSON.parse(raw) as { pid?: number };
+	} catch {
+		return await lockIsFresh(path);
+	}
+
+	if (!record.pid) return false;
+	try {
+		process.kill(record.pid, 0);
+		return true;
 	} catch {
 		return false;
 	}
@@ -331,9 +370,11 @@ export class FfmpegAcquireManager {
 		managedDirectory: string,
 		manualDirectory: string,
 	): Promise<Result<FfmpegBinary, FfmpegAcquireError>> {
+		// pid + 時刻だけでは、同一プロセス内の並行取得が同じミリ秒に入ると
+		// 同じ staging を共有し、先に終わった側の finally が後続の作業ごと消す
 		const staging = join(
 			this.toolsDirectory,
-			`.staging-${process.pid}-${Date.now()}`,
+			`.staging-${process.pid}-${randomUUID()}`,
 		);
 		const archivePath = join(staging, "archive.zip");
 		try {
