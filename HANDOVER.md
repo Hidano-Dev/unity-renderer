@@ -4,9 +4,9 @@
 
 `main` は PR #3（Scene 選択 GUI / RecorderTrack 掃除）をマージ済み。
 
-作業中のブランチは **`fix/ffmpeg-zip-and-subasset-clips`**（`origin/main` から分岐）。`docs/backlog.md` の **B-1 と B-2 を修正済み**。ユニットテスト 310 件・biome・tsc・`artgraph check --diff` はすべて通っている。
+作業中のブランチは **`fix/ffmpeg-zip-and-subasset-clips`**、**PR #4（https://github.com/Hidano-Dev/unity-renderer/pull/4）として push 済み**。`docs/backlog.md` の **B-1 と B-2 を修正し、実機検証まで完了**。ユニットテスト 310 件・biome・tsc・`artgraph check --diff` もすべて green。
 
-**未実施は実機検証だけ**（下記「次にやること」）。
+残りはレビューとマージ判断（人間の承認待ち）。
 
 ## 今回やったこと
 
@@ -24,32 +24,9 @@
 
 ## 次にやること
 
-### 1. 実機検証【未実施】
-
-C# ペイロードのテストは文字列検査なので、**振る舞いは実機でしか確かめられない**（`tests/audio-remux/extract/payload.test.ts` 冒頭のコメントもそう書いている）。
-
-**B-1**:
-
-> **検証前に必ず退避すること**: `%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\` に ffmpeg 8.1.1（Gyan build）を置いてある。`ensureFfmpeg()` が最初に見る正規のフォールバック経路で、**これがあると B-1 の症状も修正の効果も出ない。** `tools\ffmpeg\<buildId>\` も消して初回取得の状態に戻すこと（146 MB のダウンロードが走る）。
-
-`spike/unity-project` の `AudioSpike`（音声を持つ Scene）を書き出し、exit 0 になること・`tools\ffmpeg\<buildId>\<buildId>\bin\ffmpeg.exe` ができることを見る。
-
-**B-2**: `spike/unity-project` の `AudioSpikeSources` を書き出し、失敗理由が
-
-```
-詳細: [audio-remux:extract] audio extraction reported errors: extraction-errors
-      (errors[0]: sub-asset-source: AudioClip is a sub-asset with no source file: ... (clip ...))
-```
-
-になること（`clips.N.sourceDurationSec` ではなくなること）を見る。
-
-### 2. push / PR
-
-実機検証が済んだら push して PR を作る。
-
-### 3. 残っているバックログ
-
+- PR #4 のレビューとマージ判断
 - `docs/backlog.md` の **B-3**（BOM 付き `manifest.json` で原因不明のエラー）。軽微
+- **`%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\` は消してよい。** B-1 を迂回するために置いた ffmpeg 8.1.1（Gyan build）で、もう不要。管理下ビルド（8.1.2）が同じ場所の `<buildId>\` に入っており、`manual\` がある限りそちらが優先され続ける
 
 ## 決定事項
 
@@ -86,9 +63,22 @@ C# ペイロードのテストは文字列検査なので、**振る舞いは実
 
 - **`unity-render` は音声のない Scene だと ffmpeg を要求しない。** `Spike` が通って `AudioSpike` が落ちた差はここ。B-1 が今まで表面化しなかった理由でもある
 - **管理下 ffmpeg のパスは 2 段ネストする。** `<tools>\<buildId>\` に staging を rename し、その中に zip のルート（同じ `<buildId>` 名）が入るので、実体は `<tools>\<buildId>\<buildId>\bin\ffmpeg.exe`
+- **`manual\` が残っていると管理下ビルドの経路は一切走らない。** `ensureFfmpeg()` は `manual\ffmpeg.exe` の smoke test が通った時点で返す。取得経路を実機で見たいときは必ず退避する
 - **uloop の Editor 探索は Unity Hub の既定パスだけ。** 実際の場所は `unity editors -i --format json` の `location` で分かる（この環境は `D:\UnityEditors\`）
 - **`TimelineAsset.duration` は RecorderTrack のクリップを含む。** 削除で縮むので `open-scene` の値を使い続けてはいけない
 - 実行が 1 秒未満で終わる UI の状態遷移はポーリングでは捕まらない。**同期的に設定される状態は同期的に読む**
+
+## 実機検証の結果（PR #4・済み）
+
+`manual\` を退避して `tools\ffmpeg\` を空にした状態から実施。
+
+| 項目 | 結果 |
+|---|---|
+| B-1: `AudioSpike` を初回取得から書き出し | exit 0（46.73s）。146 MB の取得・展開・smoke test を通過 |
+| B-1: 展開後のレイアウト | `<tools>\<buildId>\<buildId>\` に `bin` / `doc` / `presets` の**ディレクトリ**と `LICENSE.txt`。0 byte ファイルは無し |
+| B-1: 出力の音声 | `ffprobe`（取得したビルド）で `codec_name=aac` / `duration=21.000000` |
+| B-2: `AudioSpikeSources` の失敗文面 | `[audio-remux:extract] audio extraction reported errors: extraction-errors (errors[0]: sub-asset-source: AudioClip is a sub-asset with no source file: Assets/Audio/SubAssetContainer.asset (clip S4_AudioClip_sub-asset_no_file/AudioClip sub-asset (no file)#0))`、exit 2 |
+| プロジェクトの不変性 | `git status --short spike/unity-project` 差分ゼロ・`Recordings/` 未生成 |
 
 ## 実機検証の結果（PR #3 で実施済み・再実施不要）
 
