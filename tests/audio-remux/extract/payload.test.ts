@@ -49,6 +49,24 @@ describe("audio extraction payload", () => {
 		expect(result.source).toContain("outside-visible-window");
 	});
 
+	it("omits clips whose reference has no source file on disk", () => {
+		const result = compileAudioExtractionPayload({
+			metadataFilePath: "C:\\session\\timeline-audio-metadata.json",
+			sceneName: "Main",
+		});
+
+		// ファイル実体を持たない参照は「抽出対象外としてエラー記録する」
+		// (requirements 2.2)。エントリを出すと sourcePath が null、サブアセットでは
+		// sourceDurationSec も 0 になり、受け側のスキーマ検証が errors の確認より
+		// 先に落ちて `clips.N.sourceDurationSec: Too small` としか見えなくなる。
+		expect(result.source).toMatch(
+			/errors\.Add\("sub-asset-source\|"[^;]*;\s*continue;/,
+		);
+		expect(result.source).toMatch(
+			/errors\.Add\("asset-path-unresolved\|"[^;]*;\s*continue;/,
+		);
+	});
+
 	it("advances clipIn by the amount the visible window clamped off the head", () => {
 		const result = compileAudioExtractionPayload({
 			metadataFilePath: "C:\\session\\timeline-audio-metadata.json",

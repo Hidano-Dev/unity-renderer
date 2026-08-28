@@ -185,10 +185,15 @@ async function runAfterRecording(
 	ctx.logger.debug("[audio-remux] phase=validate");
 	const metadata = await deps.metadataLoader.loadAndValidate(metadataPath);
 	if (!metadata.ok) {
+		// 抽出側が自分で報告したエラー（サブアセット参照・音源ファイル欠落）を
+		// 「検証に失敗した」と伝えると、利用者は JSON の不整合を疑って原因に
+		// たどり着けない。抽出が何を見つけたのかが分かる文面にする（10.1）。
 		throwFailure(
 			ctx,
 			"extract",
-			`metadata validation failed: ${detail(metadata.error)}`,
+			metadata.error.kind === "extraction-errors"
+				? `audio extraction reported errors: ${detail(metadata.error)}`
+				: `metadata validation failed: ${detail(metadata.error)}`,
 			outputs,
 		);
 	}

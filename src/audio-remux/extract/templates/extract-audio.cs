@@ -167,10 +167,21 @@ walk = (timeline, owner, offset, speed, windowStart, windowEnd, depth, chain) =>
                 var assetPath = UnityEditor.AssetDatabase.GetAssetPath(audio);
                 var absolutePath = string.IsNullOrEmpty(assetPath) ? null : System.IO.Path.GetFullPath(assetPath);
                 var isSubAsset = UnityEditor.AssetDatabase.IsSubAsset(audio);
+                // ファイル実体を持たない参照は「抽出対象外としてエラー記録する」
+                // （requirements 2.2）。エントリを出してはいけない: sourcePath が
+                // null、サブアセットでは audio.length も 0 になるため、受け側の
+                // スキーマ検証が errors の確認より先に落ち、利用者には
+                // `clips.N.sourceDurationSec: Too small` としか見えなくなる。
                 if (isSubAsset)
-                    errors.Add("sub-asset-source|" + clipId + "|AudioClip is a sub-asset: " + assetPath);
-                else if (string.IsNullOrEmpty(assetPath) || !IsAudioExtension(assetPath) || !System.IO.File.Exists(absolutePath))
+                {
+                    errors.Add("sub-asset-source|" + clipId + "|AudioClip is a sub-asset with no source file: " + assetPath);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(assetPath) || !IsAudioExtension(assetPath) || !System.IO.File.Exists(absolutePath))
+                {
                     errors.Add("asset-path-unresolved|" + clipId + "|Audio source file is unavailable: " + (assetPath ?? audio.name));
+                    continue;
+                }
 
                 var clipVolume = ReadSerializedFloat(asset, "m_ClipProperties.volume", 1f, warnings, clipId);
                 var clipIn = clip.clipIn;

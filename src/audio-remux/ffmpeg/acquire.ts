@@ -200,6 +200,21 @@ async function extractZip(
 		const compressed = archive.subarray(start, start + compressedSize);
 		if (name.includes("..") || isAbsolute(name))
 			throw new Error("unsafe ZIP entry");
+		const target = resolve(destination, name);
+		// biome-ignore lint/style/useTemplate: the trailing separator must remain a literal backslash
+		if (!target.startsWith(resolve(destination) + "\\"))
+			throw new Error("unsafe ZIP entry");
+		// ディレクトリエントリ（名前が区切りで終わる、サイズ 0）をファイルとして
+		// 書いてはいけない。`resolve()` が末尾の区切りを落とすため、`ffmpeg-.../` が
+		// `<dest>\ffmpeg-...` という 0 byte のファイルになり、続く配下エントリの
+		// `mkdir(<dest>\ffmpeg-...\bin, { recursive: true })` が親をファイルとして
+		// 見つけて EEXIST で落ちる。BtbN の配布 zip はディレクトリエントリを含むため、
+		// これがあると初回取得が確実に失敗する。
+		if (name.endsWith("/") || name.endsWith("\\")) {
+			await mkdir(target, { recursive: true });
+			offset = start + compressedSize;
+			continue;
+		}
 		const data =
 			method === 0
 				? compressed
@@ -209,10 +224,6 @@ async function extractZip(
 						)
 					: undefined;
 		if (!data) throw new Error(`unsupported ZIP compression method: ${method}`);
-		const target = resolve(destination, name);
-		// biome-ignore lint/style/useTemplate: the trailing separator must remain a literal backslash
-		if (!target.startsWith(resolve(destination) + "\\"))
-			throw new Error("unsafe ZIP entry");
 		await mkdir(dirname(target), { recursive: true });
 		await writeFile(target, data);
 		offset = start + compressedSize;
