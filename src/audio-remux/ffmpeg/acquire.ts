@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
 	access,
+	type FileHandle,
 	mkdir,
 	open,
 	readFile,
 	rename,
 	rm,
+	stat,
 	writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -55,6 +57,15 @@ export interface FfmpegAcquireOptions {
 }
 
 /** design 5.7: 先行プロセスのダウンロード完了を待つ上限。 */
+/**
+ * ロック操作で「取得をあきらめる理由にはならない」エラー。Windows は削除中の
+ * ファイルを開こうとすると EPERM / EBUSY / EACCES を返すため、競合しているだけの
+ * 状況をそのまま失敗にすると lock-timeout として報告してしまう。
+ */
+function isTransientLockError(code: string | undefined): boolean {
+	return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
 const LOCK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 /** design 5.7: ロック獲得待ちのポーリング間隔。 */
 const LOCK_POLL_INTERVAL_MS = 2_000;
@@ -209,16 +220,54 @@ async function extractZip(
 	if (offset === 0) throw new Error("ZIP local header not found");
 }
 
-async function lockOwnerAlive(path: string): Promise<boolean> {
+/**
+ * PID を書き終える前のロックを「まだ書き込み中」とみなす猶予。書き込み前に
+ * 落ちたプロセスのロックも、この時間を過ぎれば回収できる。
+ */
+const LOCK_WRITE_GRACE_MS = 5_000;
+
+async function lockIsFresh(path: string): Promise<boolean> {
 	try {
-		const record = JSON.parse(await readFile(path, "utf8")) as { pid?: number };
-		if (!record.pid) return false;
-		try {
-			process.kill(record.pid, 0);
-			return true;
-		} catch {
-			return false;
-		}
+		const { mtimeMs } = await stat(path);
+		return Date.now() - mtimeMs < LOCK_WRITE_GRACE_MS;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * ロックの保持者が生きているか。
+ *
+ * `open(lock, "wx")` が解決してから PID が書かれるまでの間、ファイルは存在
+ * するが中身は空になる。ここで「読めない = 保持者は死んでいる」と即断すると、
+ * 待機側が作りたてのロックを消して取り直し、2 つの取得が同時にロックを
+ * 持ったつもりで download() へ進む。先行側が managedDirectory へ rename した
+ * 後、後続側の rename は既存ディレクトリ相手になって失敗する。
+ *
+ * そのため、中身が読めない場合は mtime を見て、猶予内なら生存とみなす。
+ * `{}` のように解析はできるが PID を持たないロックは、従来どおり即座に
+ * stale と判定する。
+ */
+export async function lockOwnerAlive(path: string): Promise<boolean> {
+	let raw: string;
+	try {
+		raw = await readFile(path, "utf8");
+	} catch {
+		// ロックが消えている。保持者はいない
+		return false;
+	}
+
+	let record: { pid?: number };
+	try {
+		record = JSON.parse(raw) as { pid?: number };
+	} catch {
+		return await lockIsFresh(path);
+	}
+
+	if (!record.pid) return false;
+	try {
+		process.kill(record.pid, 0);
+		return true;
 	} catch {
 		return false;
 	}
@@ -316,24 +365,68 @@ export class FfmpegAcquireManager {
 				await handle.close();
 				return true;
 			} catch (cause) {
-				if ((cause as NodeJS.ErrnoException).code !== "EEXIST") return false;
-				if (!(await lockOwnerAlive(lock))) {
-					await rm(lock, { force: true });
+				const code = (cause as NodeJS.ErrnoException).code;
+				if (code === "EEXIST") {
+					if (await lockOwnerAlive(lock)) {
+						await this.sleep(LOCK_POLL_INTERVAL_MS);
+						continue;
+					}
+					await this.reclaimStaleLock(lock);
 					continue;
 				}
+				if (!isTransientLockError(code)) return false;
 				await this.sleep(LOCK_POLL_INTERVAL_MS);
 			}
 		}
 		return false;
 	}
 
+	/**
+	 * 残骸ロックの回収。**削除そのものを排他する**。
+	 *
+	 * stale と判断してから削除するまでの間に、別の取得が残骸を消して自分の
+	 * ロックを作り終えていることがある。そこで無条件に削除すると、作りたての
+	 * 他人のロックを消してしまう。2 つの取得が同時にこれを行うと、削除と作成の
+	 * 順序が入れ替わった側も `open(..., "wx")` に成功し、**両方が保持者のつもりで
+	 * download() へ進む**。同じ 146 MB を二重に取得したうえ、後から publish する
+	 * 側の `rename` が既存ディレクトリ相手になって失敗する。
+	 *
+	 * 回収権 (`.takeover`) を握れた 1 つだけが、保持者の生死を確認し直したうえで
+	 * 削除する。作成側は `open(..., "wx")` が排他するため、回収権を持っている間に
+	 * 新しいロックが現れることはない。
+	 */
+	private async reclaimStaleLock(lock: string): Promise<void> {
+		const takeover = `${lock}.takeover`;
+		let handle: FileHandle;
+		try {
+			handle = await open(takeover, "wx");
+		} catch (cause) {
+			const code = (cause as NodeJS.ErrnoException).code;
+			// 回収の途中で落ちたプロセスの回収権は捨てる
+			if (code === "EEXIST" && !(await lockOwnerAlive(takeover)))
+				await rm(takeover, { force: true });
+			await this.sleep(LOCK_POLL_INTERVAL_MS);
+			return;
+		}
+		try {
+			await handle.writeFile(JSON.stringify({ pid: process.pid }));
+			await handle.close();
+			// 回収権を得るまでの間に保持者が入れ替わっていることがある
+			if (!(await lockOwnerAlive(lock))) await rm(lock, { force: true });
+		} finally {
+			await rm(takeover, { force: true });
+		}
+	}
+
 	private async download(
 		managedDirectory: string,
 		manualDirectory: string,
 	): Promise<Result<FfmpegBinary, FfmpegAcquireError>> {
+		// pid + 時刻だけでは、同一プロセス内の並行取得が同じミリ秒に入ると
+		// 同じ staging を共有し、先に終わった側の finally が後続の作業ごと消す
 		const staging = join(
 			this.toolsDirectory,
-			`.staging-${process.pid}-${Date.now()}`,
+			`.staging-${process.pid}-${randomUUID()}`,
 		);
 		const archivePath = join(staging, "archive.zip");
 		try {

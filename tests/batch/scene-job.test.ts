@@ -24,13 +24,35 @@ const plan: SceneJobPlan = {
 	sessionDir: "C:\\sessions\\one",
 };
 
+/** RecorderTrack が 1 本も無い Timeline の応答。既定ではこの経路を通す。 */
+const NO_RECORDER_TRACKS = JSON.stringify({
+	ok: true,
+	mode: "scan",
+	timelines: [],
+	removed: 0,
+	timelineDurationSec: 2,
+	timelineFrameRate: 30,
+	warnings: [],
+});
+
+function payloadReturnValue(id: string, openResult: unknown): string {
+	if (id === "open-scene") return JSON.stringify(openResult);
+	if (id === "recorder-tracks") return NO_RECORDER_TRACKS;
+	return "{}";
+}
+
+const DEFAULT_OPEN_RESULT = {
+	directorFound: true,
+	multipleDirectorsWarning: false,
+	directorName: "Director",
+	timelineDurationSec: 2,
+	timelineFrameRate: 30,
+};
+
 function setup(
 	openResult: unknown = {
-		directorFound: true,
+		...DEFAULT_OPEN_RESULT,
 		multipleDirectorsWarning: true,
-		directorName: "Director",
-		timelineDurationSec: 2,
-		timelineFrameRate: 30,
 	},
 ) {
 	const session = {
@@ -47,10 +69,7 @@ function setup(
 			evalSources.push(payload.source);
 			return {
 				ok: true as const,
-				value: {
-					returnValue:
-						payload.id === "open-scene" ? JSON.stringify(openResult) : "{}",
-				},
+				value: { returnValue: payloadReturnValue(payload.id, openResult) },
 			};
 		}),
 	};
@@ -112,6 +131,7 @@ describe("one scene job", () => {
 		});
 		expect(evalCalls).toEqual([
 			"open-scene",
+			"recorder-tracks",
 			"setup-recorder",
 			"start-recording",
 		]);
@@ -163,7 +183,12 @@ describe("one scene job", () => {
 							"PLAY_MODE_NOT_READY: the Play Mode transition has not completed yet",
 					},
 				};
-			return { ok: true as const, value: { returnValue: "{}" } };
+			return {
+				ok: true as const,
+				value: {
+					returnValue: payloadReturnValue(payload.id, DEFAULT_OPEN_RESULT),
+				},
+			};
 		}) as never);
 		const result = await context.job.run(plan);
 		expect(result.outcome).toBe("success");
@@ -201,7 +226,12 @@ describe("one scene job", () => {
 					},
 				};
 			}
-			return { ok: true as const, value: { returnValue: "{}" } };
+			return {
+				ok: true as const,
+				value: {
+					returnValue: payloadReturnValue(payload.id, DEFAULT_OPEN_RESULT),
+				},
+			};
 		}) as never);
 		const result = await context.job.run(plan);
 		expect(result).toMatchObject({
@@ -240,16 +270,7 @@ describe("one scene job", () => {
 			return {
 				ok: true as const,
 				value: {
-					returnValue:
-						payload.id === "open-scene"
-							? JSON.stringify({
-									directorFound: true,
-									multipleDirectorsWarning: false,
-									directorName: "Director",
-									timelineDurationSec: 2,
-									timelineFrameRate: 30,
-								})
-							: "{}",
+					returnValue: payloadReturnValue(payload.id, DEFAULT_OPEN_RESULT),
 				},
 			};
 		}) as never);
@@ -329,6 +350,122 @@ describe("one scene job", () => {
 		});
 		expect(context.promote).toHaveBeenCalledOnce();
 		expect(context.cleanup).toHaveBeenLastCalledWith([], false);
+	});
+
+	it("removes RecorderTracks before the recorder setup and backs them up", async () => {
+		const context = setup();
+		const registerBackups = vi.fn(async (_paths: readonly string[]) => ({
+			ok: true as const,
+			value: undefined,
+		}));
+		const found = {
+			ok: true,
+			mode: "scan",
+			timelines: [
+				{
+					assetPath: "Assets/Timelines/Intro.playable",
+					chain: "root",
+					tracks: ["Recorder Track"],
+				},
+			],
+			removed: 0,
+			timelineDurationSec: 2,
+			timelineFrameRate: 30,
+			warnings: [],
+		};
+		const order: string[] = [];
+		context.pipeline.eval.mockImplementation((async (payload: {
+			id: string;
+		}) => {
+			order.push(payload.id);
+			if (payload.id === "recorder-tracks")
+				return {
+					ok: true as const,
+					value: {
+						returnValue: JSON.stringify(
+							order.filter((id) => id === "recorder-tracks").length === 1
+								? found
+								: { ...found, mode: "remove", removed: 1 },
+						),
+					},
+				};
+			return {
+				ok: true as const,
+				value: {
+					returnValue: payloadReturnValue(payload.id, DEFAULT_OPEN_RESULT),
+				},
+			};
+		}) as never);
+		const job = createSceneJob({
+			session: context.session,
+			pipeline: context.pipeline,
+			statusChannel: () => context.status as StatusChannel,
+			registerBackups,
+			validate: vi.fn(async (paths) => paths),
+			planOutputs: vi.fn(async () => [
+				{
+					format: "mp4" as const,
+					path: "C:\\renders\\Intro_1.mp4",
+					stagingPath: "C:\\renders\\Intro_1.urc-partial.mp4",
+				},
+			]),
+			cleanup: context.cleanup,
+			promote: context.promote,
+			runHooks: context.runHooks,
+			sleep: context.sleep,
+		});
+
+		const result = await job.run(plan);
+
+		expect(result.outcome).toBe("success");
+		expect(registerBackups).toHaveBeenCalledWith([
+			"Assets/Timelines/Intro.playable",
+		]);
+		// 走査・削除ともに、録画設定を組む setup-recorder より前に済ませる
+		expect(order).toEqual([
+			"open-scene",
+			"recorder-tracks",
+			"recorder-tracks",
+			"setup-recorder",
+			"start-recording",
+		]);
+		expect(result.warnings).toContainEqual(
+			expect.stringContaining("RecorderTrack を一時的に外しました"),
+		);
+	});
+
+	it("fails the scene when the RecorderTrack cleanup fails", async () => {
+		const context = setup();
+		context.pipeline.eval.mockImplementation((async (payload: {
+			id: string;
+		}) => {
+			if (payload.id === "recorder-tracks")
+				return {
+					ok: true as const,
+					value: {
+						returnValue: JSON.stringify({
+							ok: false,
+							error:
+								"RecorderTrack type was not found; com.unity.recorder is missing or its API changed",
+						}),
+					},
+				};
+			return {
+				ok: true as const,
+				value: {
+					returnValue: payloadReturnValue(payload.id, DEFAULT_OPEN_RESULT),
+				},
+			};
+		}) as never);
+
+		const result = await context.job.run(plan);
+
+		// 掃除できないまま録ると、Timeline 側の Recorder と二重に書き出される
+		expect(result).toMatchObject({
+			outcome: "failure",
+			failureReason: "recorder-track-cleanup-failed",
+		});
+		expect(context.session.quit).toHaveBeenCalledOnce();
 	});
 
 	it("propagates a failed kill from the launch timeout path", async () => {

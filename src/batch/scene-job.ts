@@ -19,7 +19,7 @@ import {
 	type StatusChannel,
 } from "../editor-session/status-channel.js";
 import type { RenderHandoff, RenderHooks } from "../hooks/registry.js";
-import type { Result } from "../shared/types.js";
+import { err, ok, type Result } from "../shared/types.js";
 import type { EditorInstall } from "../unity-env/editors.js";
 import {
 	cleanupOutputFiles,
@@ -28,11 +28,13 @@ import {
 	promoteOutputFiles,
 	validateOutputFiles,
 } from "./output.js";
+import { cleanRecorderTracks } from "./recorder-tracks.js";
 
 export type SceneFailureReason =
 	| "connect-timeout"
 	| "scene-open-failed"
 	| "no-playable-director"
+	| "recorder-track-cleanup-failed"
 	| "recorder-setup-failed"
 	| "recording-failed"
 	| "recording-timeout"
@@ -79,6 +81,14 @@ export interface SceneJobDependencies {
 	readonly runHooks?: (
 		context: Parameters<NonNullable<RenderHooks["afterRecording"]>>[0],
 	) => Promise<Result<void, { readonly message: string }>>;
+	/**
+	 * 録画前に外す Timeline アセットをバックアップへ登録する。バッチ側が
+	 * セッションを所有するため、実体は runner から渡す。
+	 */
+	readonly registerBackups?: (
+		relativePaths: readonly string[],
+	) => Promise<Result<void, { readonly message: string }>>;
+	readonly cleanRecorderTracks?: typeof cleanRecorderTracks;
 	readonly cleanup?: (
 		paths: readonly string[],
 		debug: boolean,
@@ -233,7 +243,41 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					warnings.push(
 						"Multiple root PlayableDirector components found; the first was selected.",
 					);
-				const duration = scene.timelineDurationSec;
+				const directorName = scene.directorName;
+
+				// 録画設定を組む前に、利用者が Timeline へ置いた RecorderTrack を外す。
+				// 残したままだと RecorderController の録画と並行して走り、こちらの
+				// 管理外のファイルへ二重に書き出される
+				const trackCleanup = await (
+					dependencies.cleanRecorderTracks ?? cleanRecorderTracks
+				)({
+					evalPayload: async (mode) => {
+						const evaluated = await dependencies.pipeline.eval(
+							compiler.compile("recorder-tracks", { directorName, mode }),
+							{
+								transport: { kind: "file" },
+								timeoutSec: plan.config.timeouts?.editorStartSec ?? 600,
+							},
+						);
+						return evaluated.ok
+							? ok(evaluated.value.returnValue)
+							: err({ message: evaluated.error.message });
+					},
+					registerBackups: dependencies.registerBackups,
+				});
+				if (!trackCleanup.ok)
+					throw Object.assign(new Error(trackCleanup.error.message), {
+						failureReason: "recorder-track-cleanup-failed" as const,
+					});
+				warnings.push(...trackCleanup.value.warnings);
+
+				// RecorderTrack のクリップが Timeline の末尾を伸ばしていた場合、削除で
+				// 全長が縮む。open-scene が返した値のままだと存在しない区間まで録る
+				const duration =
+					trackCleanup.value.removed > 0 &&
+					trackCleanup.value.timelineDurationSec !== null
+						? trackCleanup.value.timelineDurationSec
+						: scene.timelineDurationSec;
 				const inPoint = plan.config.range?.inPoint ?? 0;
 				const outPoint = plan.config.range?.outPoint ?? duration;
 				if (duration === null || outPoint === null || outPoint <= inPoint)
@@ -283,7 +327,7 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 					compiler.compile("setup-recorder", {
 						statusPath,
 						operationId,
-						directorName: scene.directorName,
+						directorName,
 					}),
 					{
 						transport: { kind: "file" },
@@ -305,7 +349,7 @@ export function createSceneJob(dependencies: SceneJobDependencies): SceneJob {
 						compiler.compile("start-recording", {
 							statusPath,
 							operationId,
-							directorName: scene.directorName,
+							directorName,
 							outputs: outputs.map(({ format, stagingPath }) => ({
 								format,
 								absolutePath: stagingPath,

@@ -1,63 +1,148 @@
 # HANDOVER
 
+## 現在地
+
+`feature/scene-selection-gui` は **PR #3（https://github.com/Hidano-Dev/unity-renderer/pull/3）として push 済み・CI 全 green・MERGEABLE**。15 コミット。マージ判断は未実施（人間の承認待ち）。
+
+次にやることは **`docs/backlog.md` の B-1 と B-2 の修正**（ユーザー指示）。どちらもこの PR のスコープ外なので、**別ブランチを切ること**。
+
 ## 今回やったこと
 
-- `/kiro:spec-run unity-render-core` を完走（ブランチ `feature/unity-render-core`、main から分岐）
-- 全 33 リーフタスクを codex exec で逐次実行: **32 OK / 1 FAIL（10.2 のみ）**。claude -p フォールバック発動 0 回
-- スパイク（タスク 2.x）完了 → **条件付き GO をユーザーが承認**（`spike/README.md` に記録済み、コミット `429bfe3`）
-- 実装検証を Codex（read-only）へ委譲 → 判定 NO-GO。ただし指摘の 1 つ（検証コマンド未実行）はローカル再実行で解消:
-  - typecheck ✓ / lint ✓（警告 1 件のみ）/ vitest 34 ファイル 101 テスト全 pass / artgraph check ✓
-  - `pnpm run build` で `dist/unity-render.exe` 生成、`--help` スモーク ✓
-- tasks.md のチェック状態を実績と同期（10.2 のみ未チェックで残置、コミット `54870ae`）
-
-## 決定事項
-
-- spec.json の `tasks.approved` / `ready_for_implementation` を true に更新（spec-run 起動を承認とみなす。コミット `755fd12`）
-- スパイク確定値: Unity 6000.0.36f1 + Recorder 5.1.0 + **com.unity.pipeline 0.5.0-exp.1**（0.2.0 は解決不能）
-- Unity 起動規則（`spike/AGENTS.md` に恒久化）:
-  - 必ず `--editor-version 6000.0.36f1`（ProjectVersion.txt と完全一致）でピン止め
-  - **`-automated` フラグ必須**（ユーザー指示。ダイアログ抑止、GUI モード維持、batchmode 不使用）
-  - 実装側は `unity open <path> --editor-version <ver> --args=-automated` 形式（session.ts）
-- bun はプロジェクトローカル devDependency（bun 1.4.0、`pnpm exec bun`）。グローバル導入しない
-- pnpm のビルドスクリプト許可は `pnpm-workspace.yaml` の `allowBuilds`（package.json の `pnpm` フィールドは pnpm v11 で無効）
-- C# テンプレート埋め込み: Bun 側は `.cs` を text import、vitest 側は vitest.config.ts の `rawCsharpTemplatePlugin` で対応（`?raw` サフィックスは廃止）
-
-## 捨てた選択肢と理由
-
-- **codex の FAIL 出力をそのまま記録**（タスク 1）→ 実体は全完了条件クリアで、FAIL 理由が「UnityTestRunner 不在」のみ。全タスクで再発し連続失敗ガードが誤作動するため、OK 判定＋以降のプロンプトに代替検証指示（vitest 代替可）を追加
-- **bun のグローバルインストール** → システム変更を避けプロジェクトローカルに
-- **10.2 FAIL 後の修正ループ継続** → spec-run は無人実行前提のソフトゲート。2 回目の FAIL（録画未完走）は実装課題のため記録して先へ進めた
-- **`?raw` import の維持** → Bun が解決できず build 不能。両対応方式へ変更（codex が実施）
-
-## ハマりどころ
-
-- **spec.json 未承認で codex が preflight 停止**: タスク 2.3 初回 FAIL の原因。kiro-impl skill の承認チェックを読むセッションと読まないセッションがあり挙動が不安定
-- **ProjectVersion.txt の捏造値**: タスク 2.1 が `6000.0.23f1 (b1b1b1b1b1b1)` という架空バージョンを手書きコミット → ピン止め起動と食い違い、ユーザー環境でバージョン不一致・Library リセットダイアログが多発。実値 `6000.0.36f1 (9fe3b5f71dbb)` に修正済み（コミット `ec3faf8`）
-- **codex の「クリーンアップ」が正しい値を捏造値に戻す**: 2.3 実測後の復元で Unity が書いた正値が巻き戻された。生成ファイルの「復元」はコミット済み内容が正とは限らない
-- **Codex read-only サンドボックスは pnpm 実行不可**: validate-impl の検証コマンドが全拒否 → 証跡はローカルで補完する運用が必要
-
-## 学び
-
-- codex exec への指示は「UnityTestRunner 不在時は vitest 代替可・不在自体は FAIL 理由にしない」等、失敗判定の縁を明示しないと誤 FAIL する
-- Unity プロジェクトの雛形を LLM に手書きさせると ProjectVersion 等に捏造値が入る。Unity 自身に書かせた値を正とする
-- `unity open` の Editor 引数転送は `--args=-automated` 形式（`-- -automated` ではない）
+- 実機検証を完走（Scene 絞り込み GUI / RecorderTrack 掃除はすべて実機で通過）
+- Codex レビュー計 6 件に対応（P1 ×3 / P2 ×3）
+- **CI を赤にしていた ffmpeg 取得ロックの競合を修正**（2 回の診断が必要だった。1 回目は原因の取り違え）
+- 検証中に見つかったブランチ外のバグを `docs/backlog.md` に B-1〜B-3 として記録
 
 ## 次にやること
 
-1. **［最優先］10.2 実機 E2E の録画未完走の調査**: Package 解決・固定版起動・Pipeline 疎通・ペイロード実行までは成立。録画開始後に status/output が生成されない。P-2（status writer atomicity）/ P-13（実機フック発火）の再検証条件と同根。実測記録は `docs/e2e-checklist.md`（MANUAL_VERIFY_REQUIRED）
-2. 原因修正後 `/kiro:spec-run unity-render-core` 再実行（未チェックの 10.2 だけ再実行される）
-3. 10.2 完了後、validate-impl を再実行して NO-GO を解消
-4. push / PR 作成（ユーザー許可待ち。マージ判断は必ずユーザーに仰ぐ）
-5. MINOR 指摘: lint 警告 1 件（open-scene.test.ts の不要エスケープ、FIXABLE）、artgraph trace 実行証跡の記録
+### 1. B-1 — ZIP 展開がディレクトリエントリをファイルとして書く【最優先】
+
+`src/audio-remux/ffmpeg/acquire.ts` の `extractZip()`（180 行目〜）。
+
+```ts
+212:  const target = resolve(destination, name);   // "ffmpeg-.../" → 末尾の / が落ちる
+217:  await writeFile(target, data);               // ディレクトリ名の 0 byte ファイルができる
+```
+
+ZIP のディレクトリエントリ（名前が `/` で終わる、サイズ 0）を通常のファイルとして扱っている。続く `ffmpeg-.../bin/ffmpeg.exe` の展開で `mkdir(<dest>\ffmpeg-...\bin, { recursive: true })` が親をファイルとして見つけ `EEXIST` で落ちる。
+
+**ffmpeg 未取得のマシンでは、音声を持つ Scene の書き出しが初回に必ず失敗する。** 実測ログ:
+
+```
+失敗理由: hook-failed
+詳細: [audio-remux:ffmpeg-acquire] EEXIST: file already exists, mkdir
+      '...\tools\ffmpeg\.staging-22092-...\ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1'
+```
+
+修正方針: 名前が `/` で終わるエントリは `mkdir(target, { recursive: true })` して `continue`。
+
+**回帰テストを必ず足すこと。** `tests/audio-remux/ffmpeg/acquire.test.ts` の `zipStored()` ヘルパーは**エントリ 1 件・ディレクトリエントリなし**の zip しか作れないため、この不具合を検出できていない。複数エントリ＋ディレクトリエントリを含む zip を作れるようヘルパーを拡張する。
+
+> **検証前に必ず消すこと**: `%LOCALAPPDATA%\unity-render-core\tools\ffmpeg\manual\` に ffmpeg 8.1.1（Gyan build）を置いてある。実機検証を完走させるための迂回で、`ensureFfmpeg()` が最初に見る正規のフォールバック経路。**これがあると B-1 の症状が出ない。**
+
+### 2. B-2 — ファイル実体を持たない AudioClip 参照が Scene ごと失敗させる
+
+サブアセットの `AudioClip`（`.asset` 内に埋め込まれ音声ファイルの実体を持たない）を Timeline が参照していると、その Scene が失敗する。`spike/unity-project` の `AudioSpikeSources` で再現する。
+
+```
+失敗理由: hook-failed
+詳細: [audio-remux:extract] metadata validation failed: validation-error
+      (clips.4.sourceDurationSec: Too small: expected number to be >0)
+```
+
+関係する場所:
+
+- `src/audio-remux/extract/templates/extract-audio.cs:216` — `audio.length` をそのまま出す。実体のないサブアセットでは 0 になる
+- `src/audio-remux/metadata/schema.ts:39` — `sourceDurationSec: finiteNumber.positive()` が 0 を弾く。**スキーマ検証は ffprobe による上書きより前に走る**
+- `src/audio-remux/index.ts:159-164` — ffprobe の実測値で `sourceDurationSec` を差し替える箇所（検証を通った後）
+
+**まず設計意図を確認すること。** `spike/timeline-audio/README.md` の Q-5 は「`AssetDatabase.IsSubAsset()` が true かつ拡張子が音声形式でないことで検出できる。**これを error として記録する**」と書いている。クリップ単位の error 記録を想定していたなら、抽出側で当該クリップを除外して警告に降格する。Scene 失敗が想定どおりなら、`clips.4.sourceDurationSec` ではなく「音声ファイルの実体を持たない参照」と分かる文言にする（現状では利用者が原因を特定できない）。
+
+### 3. 保留中の判断
+
+- Codex のレビュー 6 件への「対応済み」返信を PR へ投稿するか（外向き操作なので未実施）
+- PR #3 のマージ
+
+## 決定事項
+
+- **ブランチ外のバグは `docs/backlog.md` に記録し、そのブランチでは直さない**（ユーザー判断）。例外は CI を止めているもの。B-4（ロック競合）はこれに該当したのでこの PR で直し、バックログから外した
+- **検証用フィクスチャは uloop（Unity CLI Loop）で作る。** `execute-dynamic-code` は `--code-file` と `using UnityEditor.Recorder;` の直書きが通り、`tl.CreateTrack<RecorderTrack>()` / `track.CreateClip<RecorderClip>()` をそのまま書ける。この repo の `unity command eval` 経路は `PipelineEval_<hash>.Execute()` に包まれるため usings 不可・完全修飾必須
+- **uloop はフィクスチャ生成にだけ使い、測る前に撤去する。** パッケージを入れると `Packages/manifest.json` / `packages-lock.json` / `ProjectSettings/PackageManagerSettings.asset` / `.uloop/` が変わり、「`git status --short spike/unity-project` が差分ゼロ」という検証の中核判定と project-guard のバックアップ対象を汚す
+- **`recorder-track-cleanup-failed` の実機再現は諦める。** `patchManifest()` が `com.unity.recorder` を無ければ追加し直す（`src/project-guard/manifest-patch.ts:38-45`）ため、manifest から抜いても型解決失敗にならない。エラー経路は unit test の担保に留める
+- **`--port` の検証は Commander の引数パーサーと `runGui` の両方に置く。** 前者は不正値をエコーした案内、後者はプログラムから呼ばれた場合に reject ではなく exit 1 を返すための保険
+
+## 捨てた選択肢と理由
+
+- **`uloop launch` で Editor を起動** → Editor が `D:\UnityEditors\` にあり、uloop は Unity Hub の既定パスしか探さないため `executable not found`。`unity open` で起動すれば uloop は**起動元を問わずその Editor に接続する**
+- **`uloop skills install`** → skill が `spike/unity-project/.claude/skills` に入る。clean に保ちたいディレクトリなので入れず、`--help` だけで足りた
+- **RecorderClip を設定なしの空クリップにする** → 掃除が失敗しても二重書き出しが起きず、「`Recordings/` 未生成」という判定が空振りする。実物の `MovieRecorderSettings` を付けた
+- **`AudioSpike` の検証で `range` を指定する** → 録画長が固定され、duration 短縮（26.0 → 21.0）が出力に現れない。`range` を省いて全長録画した
+- **GUI 検証でプロジェクトパスを spike に差し替える** → 利用者の保存済み GUI 状態を壊す。復元されていた実プロジェクト（45 Scene）でそのまま検証し、終了時に元の値へ戻した
+- **ロック競合を「空ロックを生存とみなす」だけで直す** → これは実在するが**支配的な競合ではなく**、CI は落ち続けた（下記「ハマりどころ」）
+
+## ハマりどころ
+
+- **CI のフレーク診断を 1 回間違えた。** 「作りたてのロックを横取りする」は実在したが主因ではない。主因は**残骸ロックの削除が排他されていないこと**で、2 つの取得が両方「stale なので消す」と判断し、削除と作成の順序が入れ替わると両方が保持者になる。**約 50% で失敗する**ので CI の失敗率と一致した。回収権（`.acquire.lock.takeover`）で削除だけを排他して解決
+- **`EEXIST` 以外を一律に失敗としてはいけない。** Windows は削除中のファイルを開くと `EPERM` / `EBUSY` / `EACCES` を返す。競合しているだけの状況が `lock-timeout` として報告されていた
+- **競合テストは 1 回では意味がない。** 50% で通るなら、壊れた実装でも CI を素通りする。`tests/audio-remux/ffmpeg/acquire.test.ts` の該当テストは 25 回繰り返す形にした。**検証には一時的なストレステスト（200 ペア）を別ファイルで作り、確認後に削除するのが有効**だった（この vitest には `--repeats` が無い）
+- **`Set-Content -Encoding UTF8` は BOM を付ける**（PowerShell 5.1）。これで書いた `manifest.json` が `JSON.parse` で落ち、`Temporary package addition failed.` としか出なかった（backlog B-3）。ファイルを一時的に差し替えるときは `git checkout <ref> -- <path>` を使うこと
+- **PowerShell で native exe に `2>&1` を使うと 1 行ごとに `NativeCommandError` で包まれる。** `Start-Process -RedirectStandardOutput/-RedirectStandardError` に切り替える
+- **`unity open` はフォアグラウンドで戻らない。** バックグラウンド実行にして `.uloop/project-runner-pin.json` の生成でレディを判定した
+- Unity を強制終了すると `Temp/UnityLockfile` が 0 byte で残るが、`checkProjectLock()` は `r+` で開けるかで判定する（`src/project-guard/lock.ts:20-40`）ので stale 扱いで通る
+- **ブラウザ自動操作で `await` を挟んだ長い JS は CDP が 45 秒でタイムアウトすることがある。** ボタン無効化の観測は `click()` の直後に同期で `disabled` を読む形にしたら一発で取れた
+- **このブランチの upstream が `origin/main` になっている。** `git push` を引数なしで打たないこと
+
+## 学び
+
+- **`unity-render` は音声のない Scene だと ffmpeg を要求しない。** `Spike` が通って `AudioSpike` が落ちた差はここ。B-1 が今まで表面化しなかった理由でもある
+- **uloop の Editor 探索は Unity Hub の既定パスだけ。** 実際の場所は `unity editors -i --format json` の `location` で分かる（この環境は `D:\UnityEditors\`）
+- **`TimelineAsset.duration` は RecorderTrack のクリップを含む。** 削除で縮むので `open-scene` の値を使い続けてはいけない
+- 実行が 1 秒未満で終わる UI の状態遷移はポーリングでは捕まらない。**同期的に設定される状態は同期的に読む**
+
+## 実機検証の結果（済み・再実施不要）
+
+| 項目 | 結果 |
+|---|---|
+| 最小正常系（`Spike`） | exit 0 |
+| RecorderTrack 掃除（`AudioSpike`） | `removed=2` / duration `26.0 → 21.0` / 出力 mp4 が `duration=21.000000`・`nb_frames=630` |
+| ネスト検出 | `chain: "root > ToNestedL1 > ToNestedL2"` |
+| `.playable` の不変性 | SHA-256 一致（失敗した実行でも不変） |
+| 二重書き出しの阻止 | `spike/unity-project/Recordings` 未生成 |
+| 複数 Scene バッチ | 進捗表示・部分失敗で exit 2 |
+| GUI 絞り込み（実ブラウザ / 45 Scene） | 全項目。`Suisei_Pajama` が Scene 名 `20260623_SuiseiPajama` に一致＝パス側にも当たっている証拠 |
+| GUI のライブログ・ボタン無効化 | クリック時に 4 ボタンが同期的に `disabled`、完了後に復帰 |
+
+### フィクスチャの再生成手順（必要になったら）
+
+```powershell
+# フェーズ A: uloop で生成
+uloop package install --project-path spike\unity-project
+unity open "<repo>\spike\unity-project" --editor-version 6000.0.36f1 --args "-automated" --non-interactive
+uloop --project-path spike\unity-project execute-dynamic-code --code-file <build-recorder-track-fixture.cs>
+uloop launch -q --project-path spike\unity-project
+git checkout -- spike/unity-project/Packages spike/unity-project/ProjectSettings
+Remove-Item -Recurse -Force spike\unity-project\.uloop
+
+# フェーズ B: 計測（uloop 撤去後）
+dist\unity-render.exe render <config>.json
+```
+
+生成コードは `AudioSpikeRoot.playable`（clip 21.0–26.0、duration を 21.0 → 26.0 へ伸ばす）と `AudioSpikeNestedL2.playable`（clip 0.0–1.0）へ `RecorderTrack` + `RecorderClip` + `MovieRecorderSettings`（320×180、出力先 `Recordings/`）を追加し、`AssetDatabase.SaveAssets()` を最後に 1 回だけ呼ぶ。既存の `RecorderTrack` を先に消すので冪等。
+
+## このブランチで直したもの（レビュー対応）
+
+| 指摘 | 対応 |
+|---|---|
+| P1 `src/gui/runner.ts` 実行ロックの取得タイミング | `#running` を設定ファイル書き込みの `await` より後に立てていたため 2 本目がガードを素通りした。ガード直後に立て、失敗経路で解放 |
+| P1 `src/gui/page.ts` 走査中の実行 | 走査中は一覧を空にして loading 状態へ移し、実行と再読み込みを禁止（`updateRunButtons()`） |
+| P2 `src/gui/page.ts` 古い走査結果 | 世代番号 `sceneRequest` で最新要求以外の応答を捨てる |
+| P2 `recorder-tracks.cs` 共有 Timeline | `visited` のキーに owner の instance ID を含める。owner ごとに別の子へ解決される構成で 2 つ目を循環として捨てていた |
+| P1 `src/gui/page.ts` 手入力でのプロジェクト変更 | `selectionProjectPath` で選択の帰属を覚え、パスが変われば捨てる |
+| P2 `src/cli/index.ts` `--port` の検証 | Commander の引数パーサー＋`runGui` の範囲確認 |
 
 ## 関連ファイル
 
-- `.kiro/specs/unity-render-core/`（spec.json / requirements.md / design.md / tasks.md）
-- `spike/README.md` — P-1〜P-13 実測記録・条件付き GO・ユーザー承認
-- `spike/AGENTS.md` — Unity 起動規則（ピン止め + -automated）
-- `spike/unity-project/` — 検証用 Unity プロジェクト（6000.0.36f1）
-- `docs/e2e-checklist.md` — 10.2 実測チェックリスト（未完了項目あり）
-- `docs/setup.md` — 初回セットアップ手順
-- `src/`（shared / config / unity-env / project-guard / csharp-payloads / editor-session / batch / hooks / reporting / cli）
-- `tests/` — 34 ファイル 101 テスト（全 pass）
-- `.github/workflows/ci.yml`、`package.json`、`pnpm-workspace.yaml`、`vitest.config.ts`
+- `docs/backlog.md` — B-1 / B-2 / B-3
+- `src/audio-remux/ffmpeg/acquire.ts` — B-1 の修正対象。ロック競合の修正もここ
+- `src/audio-remux/metadata/schema.ts` / `src/audio-remux/extract/templates/extract-audio.cs` / `src/audio-remux/index.ts` — B-2 の関係箇所
+- `tests/audio-remux/ffmpeg/acquire.test.ts` — `zipStored()` の拡張が B-1 の回帰テストに必要

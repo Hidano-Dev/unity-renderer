@@ -74,6 +74,33 @@ bun run src/cli/index.ts check render-config.json
 
 `check` は設定、Unity CLI、Editor のバージョン、Scene の存在などを確認します。`check` では Editor を起動しません。エラーが出た場合は、表示された `unity` CLI のセットアップ手順、`ProjectVersion.txt`、`unity editors -i` の結果を確認してから再実行してください。
 
+## 4-b. コマンドを使わない場合（GUI）
+
+コマンド操作が不要な利用者向けに、Scene をチェックボックスで選ぶ画面を用意しています。`unity-render-gui.bat` を **ダブルクリック** すると、ローカルサーバーが起動して既定のブラウザーに設定画面が開きます（`unity-render.exe gui` と同じです）。
+
+`unity-render-gui.bat` は `unity-render.exe` と同じフォルダーに置いてください（リポジトリから使う場合は `dist\unity-render.exe` も探します）。
+
+画面でできることは次のとおりです。
+
+1. **Unity プロジェクト** — 「参照…」でフォルダーを選ぶと、`Assets` 配下の `.unity` をすべて一覧します
+2. **書き出す Scene** — チェックボックスで選択。「絞り込み」に文字を入れると、Scene 名かフォルダ名にその文字を含むものだけが残ります。「すべて ON」「すべて OFF」は**表示中の Scene にだけ**効くので、`SampleScene` が大量にあるプロジェクトでも、書き出したいものだけを絞ってから一括で切り替えられます。絞り込みは表示を変えるだけで、隠れている Scene の選択はそのまま残ります
+3. **出力設定** — 出力先フォルダー、ファイル名、解像度、フレームレート、形式
+4. **実行** — 「事前チェック」は `check` と、「書き出し実行」は `render` と同じ処理で、進捗とログがそのまま画面に流れます
+
+入力内容は変更のたびに自動保存され、次回起動時に復元されます。保存先は次のファイルです。
+
+```text
+%LOCALAPPDATA%\unity-render-core\gui-state.json
+```
+
+「事前チェック」「書き出し実行」を押すと、その時点の入力から `render-config.json` を組み立てて実行します。CLI と同じ設定スキーマで検証するため、GUI で通った設定はそのまま `unity-render.exe render render-config.json` でも実行できます。
+
+補足事項:
+
+- **同名の Scene は選択できません。** 設定ファイルは Scene 名で対象を指定する仕様のため、`Assets` 内に同じ名前の `.unity` が複数あると一意に決まりません。該当する行は選択不可として理由を表示するので、どちらかの名前を変更してください
+- サーバーはループバック（`127.0.0.1`）にのみ待ち受け、起動ごとに発行するトークンを持つ URL でしか操作できません。ブラウザーを閉じても処理は続きます。終了するときは、`.bat` のコンソール画面で Ctrl+C を押してください
+- 実行は常に 1 本だけです（Unity Pipeline のポート 7800 が固定のため）
+
 ## 5. 初回の書き出し
 
 `check` が成功したら、次のコマンドで書き出しを実行します。
@@ -83,6 +110,18 @@ unity-render.exe render render-config.json
 ```
 
 書き出し時は `unity open` により Editor を GUI モードで起動し、`com.unity.pipeline` の localhost:7800 API と `unity command eval` を使用します。対象プロジェクトを別の Unity Editor で開いたままにせず、実行前に保存してください。CLI は通常処理の終了時に Editor を閉じ、パッケージ設定を復元します。
+
+### Timeline 上の RecorderTrack について
+
+このツールの録画は、Play Mode 内で Recorder API（`RecorderController`）を組み立てて行います。Timeline に置かれた **RecorderTrack はそれと並行して走り、設定ファイルの管理外のパスへ二重に書き出してしまう**ため、Scene を開いた直後、録画設定を組む前にすべて取り除いてから録画します。
+
+- 対象は root の Timeline に加え、**ControlTrack でネストした子 Timeline も再帰的に**辿ります
+- 削除は Unity のメモリ上だけで行い、`.playable` ファイルは保存しません。Editor は保存せずに終了するため、**書き出し後の Timeline は元のまま**です
+- 念のため、削除前に対象の `.playable` をセッションディレクトリへバックアップします。万一 Editor 側がアセットを保存してしまった場合や、実行が途中で落ちた場合は、`Packages/manifest.json` と同じ復元経路（次回実行時の自動復旧を含む）で書き戻します
+- 取り除いた RecorderTrack は、Scene ごとの警告としてログに出ます
+- `com.unity.recorder` の API 変更などで RecorderTrack の型を解決できない場合、「見つからなかった＝0 件」とは扱わず、その Scene を失敗させます（`recorder-track-cleanup-failed`）。二重書き出しを黙って通さないための挙動です
+
+RecorderTrack のクリップが Timeline の末尾を伸ばしていた場合、削除で全長が短くなります。録画範囲は削除後の長さを基準に決まります。
 
 ## 注意事項: Unity CLI と Pipeline package は experimental
 

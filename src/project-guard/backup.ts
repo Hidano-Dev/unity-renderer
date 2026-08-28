@@ -23,6 +23,12 @@ export interface BackupFile {
 	readonly backupFileName: string;
 	readonly sha256: string;
 	readonly exists: boolean;
+	/**
+	 * 内容が記録時と同じなら復元を省く。Timeline アセットのように、正常系では
+	 * 一度も書き換わらない「保険としてのバックアップ」に付ける。書き戻すと
+	 * 中身が同じでも mtime が動き、Unity が次回起動時に再インポートしてしまう。
+	 */
+	readonly skipIfUnchanged?: boolean;
 }
 export interface BackupSession {
 	readonly version: 1;
@@ -148,6 +154,15 @@ async function atomicRestore(source: string, target: string): Promise<void> {
 	}
 }
 
+/** 対象が記録時と同一内容か。読めない場合は「変わった」として復元させる。 */
+async function isUnchanged(target: string, file: BackupFile): Promise<boolean> {
+	try {
+		return hash(await readFile(target)) === file.sha256;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * バックアップから manifest 群を戻し、セッションを閉じる。recovery の
  * `restoreSession` はこれに委譲する(セッション開始失敗時の巻き戻しでも使うため、
@@ -161,6 +176,8 @@ export async function restoreBackupSession(
 			const target = path.join(session.projectPath, file.relativePath);
 			const backup = path.join(session.sessionDirectory, file.backupFileName);
 			if (file.exists) {
+				if (file.skipIfUnchanged === true && (await isUnchanged(target, file)))
+					continue;
 				await access(backup);
 				await atomicRestore(backup, target);
 			} else {
@@ -179,6 +196,94 @@ export async function restoreBackupSession(
 			manualRecoveryHint:
 				"Keep the active session directory and retry recovery before running another render.",
 		});
+	}
+}
+
+/** プロジェクト相対パスから、セッション内で衝突しないバックアップ名を作る。 */
+function backupFileNameFor(relativePath: string): string {
+	const digest = createHash("sha256")
+		.update(relativePath.toLowerCase())
+		.digest("hex")
+		.slice(0, 12);
+	return `asset-${digest}${path.extname(relativePath)}`;
+}
+
+/** `Assets/...` 形式を OS のパス区切りへ正規化する。 */
+function normalizeRelativePath(relativePath: string): string {
+	return path.normalize(relativePath.replace(/\//gu, path.sep));
+}
+
+/**
+ * 実行中のセッションへバックアップ対象を追加する。Timeline から RecorderTrack を
+ * 外す前に、対象アセットをここへ預けておくと、通常の復元とクラッシュ後の
+ * `recoverProject` の両方が同じ経路で書き戻せる。
+ *
+ * 既に登録済みのパスは読み飛ばす(Scene をまたいで同じ Timeline を共有していても、
+ * 最初に記録した「変更前」の内容を上書きしないため)。
+ */
+export async function registerBackupFiles(
+	session: BackupSession,
+	relativePaths: readonly string[],
+	options: {
+		readonly writeSession?: (session: BackupSession) => Promise<void>;
+	} = {},
+): Promise<Result<BackupSession, GuardError>> {
+	const known = new Set(
+		session.files.map((file) => normalizeRelativePath(file.relativePath)),
+	);
+	const added: BackupFile[] = [];
+	try {
+		for (const requested of relativePaths) {
+			const relativePath = normalizeRelativePath(requested);
+			if (relativePath === "" || known.has(relativePath)) continue;
+			const source = path.resolve(session.projectPath, relativePath);
+			// Unity が返したパスをそのまま結合する。プロジェクト外を指す値は、
+			// バックアップ先も復元先も想定外になるため受け付けない
+			const projectRoot = path.resolve(session.projectPath);
+			if (
+				source !== projectRoot &&
+				!source.startsWith(`${projectRoot}${path.sep}`)
+			)
+				throw new Error(`Path escapes the project directory: ${requested}`);
+			const backupFileName = backupFileNameFor(relativePath);
+			const backupPath = path.join(session.sessionDirectory, backupFileName);
+			await copyFile(source, backupPath);
+			const [originalBytes, backupBytes] = await Promise.all([
+				readFile(source),
+				readFile(backupPath),
+			]);
+			if (Buffer.compare(originalBytes, backupBytes) !== 0)
+				throw new Error(`Backup verification failed: ${requested}`);
+			known.add(relativePath);
+			added.push({
+				relativePath,
+				backupFileName,
+				sha256: hash(originalBytes),
+				exists: true,
+				skipIfUnchanged: true,
+			});
+		}
+	} catch (cause) {
+		return failure(
+			"backup-failed",
+			"Timeline アセットのバックアップに失敗しました。RecorderTrack は削除していません。",
+			cause,
+		);
+	}
+	if (added.length === 0) return ok(session);
+	const updated: BackupSession = {
+		...session,
+		files: [...session.files, ...added],
+	};
+	try {
+		await (options.writeSession ?? writeBackupSession)(updated);
+		return ok(updated);
+	} catch (cause) {
+		return failure(
+			"io-error",
+			"バックアップ一覧を更新できませんでした。RecorderTrack は削除していません。",
+			cause,
+		);
 	}
 }
 

@@ -21,6 +21,9 @@ node_modules
 # Build and test artifacts
 dist/
 *.exe
+
+# Render settings written by `unity-render init` / the GUI (machine-specific paths)
+render-config.json
 coverage/
 .artgraph/trace/
 *.jsonl

@@ -3,6 +3,9 @@ import openSceneTemplate from "./templates/open-scene.cs" with { type: "text" };
 import quitEditorTemplate from "./templates/quit-editor.cs" with {
 	type: "text",
 };
+import recorderTracksTemplate from "./templates/recorder-tracks.cs" with {
+	type: "text",
+};
 import setupRecorderTemplate from "./templates/setup-recorder.cs" with {
 	type: "text",
 };
@@ -14,6 +17,7 @@ import startRecordingTemplate from "./templates/start-recording.cs" with {
 
 export type PayloadId =
 	| "open-scene"
+	| "recorder-tracks"
 	| "setup-recorder"
 	| "start-recording"
 	| "quit-editor";
@@ -31,6 +35,7 @@ export const PARAMS_PLACEHOLDER = "/*__PARAMS_JSON__*/";
 
 export const payloadTemplates: Readonly<Record<PayloadId, string>> = {
 	"open-scene": openSceneTemplate,
+	"recorder-tracks": recorderTracksTemplate,
 	"setup-recorder": setupRecorderTemplate,
 	"start-recording": startRecordingTemplate,
 	"quit-editor": quitEditorTemplate,

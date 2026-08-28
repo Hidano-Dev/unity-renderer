@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
 	FfmpegAcquireManager,
 	type FfmpegFetch,
 	type FfmpegSmokeTest,
+	lockOwnerAlive,
 } from "../../../src/audio-remux/ffmpeg/acquire.js";
 import { FFMPEG_MANIFEST } from "../../../src/audio-remux/ffmpeg/manifest.js";
 
@@ -171,44 +172,89 @@ describe("FfmpegAcquireManager", () => {
 		await rm(directory, { recursive: true, force: true });
 	});
 
-	it("removes stale locks and serializes concurrent acquisition", async () => {
+	it("does not steal a lock whose owner has not written its pid yet", async () => {
 		const directory = await setup();
+		const lock = join(directory, ".acquire.lock");
+		try {
+			// open(lock, "wx") が解決してから PID が書かれるまで、ファイルは
+			// 存在するが空。ここを stale と判定すると待機側が作りたてのロックを
+			// 消して取り直し、2 つの取得が同時に download() へ進む
+			await writeFile(lock, "");
+			expect(await lockOwnerAlive(lock)).toBe(true);
+
+			// 書き込み前に落ちた保持者は、猶予を過ぎれば回収できる
+			const stale = new Date(Date.now() - 60_000);
+			await utimes(lock, stale, stale);
+			expect(await lockOwnerAlive(lock)).toBe(false);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("reads the owner out of a written lock", async () => {
+		const directory = await setup();
+		const lock = join(directory, ".acquire.lock");
+		try {
+			await writeFile(lock, JSON.stringify({ pid: process.pid }));
+			expect(await lockOwnerAlive(lock)).toBe(true);
+
+			// PID を持たないロックは従来どおり即座に stale
+			await writeFile(lock, JSON.stringify({}));
+			expect(await lockOwnerAlive(lock)).toBe(false);
+
+			await rm(lock, { force: true });
+			expect(await lockOwnerAlive(lock)).toBe(false);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("removes stale locks and serializes concurrent acquisition", async () => {
 		const archive = zipStored(
 			FFMPEG_MANIFEST.archiveBinaryRelPath,
 			new TextEncoder().encode("fake"),
 		);
 		const manifest = testManifest(archive);
-		await writeFile(join(directory, ".acquire.lock"), JSON.stringify({}));
-		let fetchCount = 0;
-		const delayedFetch: FfmpegFetch = async () => {
-			fetchCount += 1;
-			await new Promise((done) => setTimeout(done, 20));
-			return new Response(archive, { status: 200 });
-		};
-		// 実運用の待機は 2 秒間隔なのでテストでは短縮する
-		const sleep = async () => {};
-		const first = new FfmpegAcquireManager({
-			toolsDirectory: directory,
-			manifest,
-			fetch: delayedFetch,
-			smokeTest: smokeOk,
-			sleep,
-		});
-		const second = new FfmpegAcquireManager({
-			toolsDirectory: directory,
-			manifest,
-			fetch: delayedFetch,
-			smokeTest: smokeOk,
-			sleep,
-		});
-		const results = await Promise.all([
-			first.ensureFfmpeg(),
-			second.ensureFfmpeg(),
-		]);
-		expect(results.every((result) => result.ok)).toBe(true);
-		expect(fetchCount).toBe(1);
-		await rm(directory, { recursive: true, force: true });
-	});
+		// 残骸ロックを 2 つが同時に見て、どちらが先に消して作り直すかは
+		// 実行ごとに入れ替わる。1 回だけでは、削除を排他していない実装でも
+		// 半分は通ってしまうため繰り返す
+		const failures: string[] = [];
+
+		for (let round = 0; round < 25; round += 1) {
+			const directory = await setup();
+			await writeFile(join(directory, ".acquire.lock"), JSON.stringify({}));
+			let fetchCount = 0;
+			const delayedFetch: FfmpegFetch = async () => {
+				fetchCount += 1;
+				await new Promise((done) => setTimeout(done, 5));
+				return new Response(archive, { status: 200 });
+			};
+			// 実運用の待機は 2 秒間隔なのでテストでは短縮する
+			const sleep = async () => {};
+			const manager = () =>
+				new FfmpegAcquireManager({
+					toolsDirectory: directory,
+					manifest,
+					fetch: delayedFetch,
+					smokeTest: smokeOk,
+					sleep,
+				});
+
+			const results = await Promise.all([
+				manager().ensureFfmpeg(),
+				manager().ensureFfmpeg(),
+			]);
+
+			for (const result of results)
+				if (!result.ok) failures.push(`round ${round}: ${result.error.kind}`);
+			// 2 つが同時に保持者になると 146 MB を二重に取得する
+			if (fetchCount !== 1)
+				failures.push(`round ${round}: fetched ${fetchCount} times`);
+			await rm(directory, { recursive: true, force: true });
+		}
+
+		expect(failures).toEqual([]);
+	}, 60_000);
 
 	// 146 MB のダウンロードは実測でも高速回線で 8.2 秒かかる。待機側の上限が
 	// 短いと、通常の回線で後続プロセスが取り逃して Scene の音声合成が失敗する。

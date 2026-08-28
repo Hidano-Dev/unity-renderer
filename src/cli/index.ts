@@ -1,14 +1,18 @@
-import { Command } from "commander";
-import { createAudioRemuxHooks } from "../audio-remux/index.js";
-import { createHookRegistry } from "../hooks/registry.js";
+import { Command, InvalidArgumentError } from "commander";
 import { runCheck } from "./check.js";
+import { createCompositionHooks } from "./composition.js";
+import { isListenablePort, runGui } from "./gui.js";
 import { runInit } from "./init.js";
 import { runRender } from "./render.js";
 
-export function createCompositionHooks() {
-	const registry = createHookRegistry();
-	registry.register(createAudioRemuxHooks());
-	return registry.current[0];
+export { createCompositionHooks } from "./composition.js";
+
+/** listen 前に弾く。範囲外の値は server.listen が同期的に投げるため。 */
+function parsePort(value: string): number {
+	const port = Number(value);
+	if (!isListenablePort(port))
+		throw new InvalidArgumentError("1〜65535 の整数を指定してください。");
+	return port;
 }
 
 /** @impl URC-15.1 */
@@ -40,6 +44,21 @@ export function createCli(): Command {
 				process.exitCode = await runInit(output, options);
 			},
 		);
+	program
+		.command("gui")
+		.description("Open the Scene selection window in the default browser")
+		.option("--no-open", "start the local server without opening a browser")
+		.option(
+			"--port <port>",
+			"listen on a fixed port instead of a free one",
+			parsePort,
+		)
+		.action(async (options: { open?: boolean; port?: number }) => {
+			process.exitCode = await runGui({
+				openBrowser: options.open !== false,
+				port: options.port,
+			});
+		});
 	return program;
 }
 

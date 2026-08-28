@@ -33,6 +33,7 @@ describe("csharp payload compiler", () => {
 	it("loads every payload from an independent template and injects JSON once", () => {
 		for (const id of [
 			"open-scene",
+			"recorder-tracks",
 			"setup-recorder",
 			"start-recording",
 			"quit-editor",
