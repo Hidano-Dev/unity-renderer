@@ -29,10 +29,25 @@ function openInBrowser(url: string): void {
 	child.unref();
 }
 
+/** listen できるポートか。NaN や小数を渡すと listen が同期的に投げる。 */
+export function isListenablePort(port: number): boolean {
+	return Number.isInteger(port) && port >= 1 && port <= 65_535;
+}
+
 export async function runGui(options: GuiOptions = {}): Promise<0 | 1> {
 	const write =
 		options.write ??
 		((message: string) => process.stdout.write(`${message}\n`));
+
+	// server.listen は範囲外の値に対して ERR_SOCKET_BAD_PORT を同期的に投げる。
+	// error イベントでは拾えず、案内のない reject になってしまう
+	if (options.port !== undefined && !isListenablePort(options.port)) {
+		write(
+			`Error: --port には 1〜65535 の整数を指定してください (受け取った値: ${options.port})。`,
+		);
+		return 1;
+	}
+
 	const configPath = path.resolve(
 		options.configPath ?? path.join(process.cwd(), DEFAULT_GUI_CONFIG_FILE),
 	);
