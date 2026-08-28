@@ -313,6 +313,56 @@ describe("createAudioRemuxHooks", () => {
 		});
 	});
 
+	// 抽出側が自分で報告したエラーを「検証に失敗した」と伝えると、利用者は JSON の
+	// 不整合を疑って原因にたどり着けない。サブアセット参照はここに来る（10.1）。
+	it("names the extraction as the source of reported entry errors", async () => {
+		const deps = baseDeps({
+			metadataLoader: {
+				loadAndValidate: vi.fn(async () =>
+					err({
+						kind: "extraction-errors" as const,
+						issues: [
+							{
+								path: "errors[0]",
+								message:
+									"sub-asset-source: AudioClip is a sub-asset with no source file: Assets/Audio/SubAssetContainer.asset (clip A_Track/Voice#0)",
+							},
+						],
+					}),
+				),
+			},
+		});
+
+		await expect(hook(deps)(context())).rejects.toMatchObject({
+			category: "extract",
+			message:
+				"[audio-remux:extract] audio extraction reported errors: extraction-errors (errors[0]: sub-asset-source: AudioClip is a sub-asset with no source file: Assets/Audio/SubAssetContainer.asset (clip A_Track/Voice#0))",
+			outputs: [
+				{ format: "mp4", videoPath, outcome: "skipped" },
+				{ format: "mov-prores", videoPath: movPath, outcome: "skipped" },
+			],
+		});
+	});
+
+	it("still reports schema mismatches as a validation failure", async () => {
+		const deps = baseDeps({
+			metadataLoader: {
+				loadAndValidate: vi.fn(async () =>
+					err({
+						kind: "validation-error" as const,
+						issues: [{ path: "schemaVersion", message: "Invalid literal" }],
+					}),
+				),
+			},
+		});
+
+		await expect(hook(deps)(context())).rejects.toMatchObject({
+			category: "extract",
+			message:
+				"[audio-remux:extract] metadata validation failed: validation-error (schemaVersion: Invalid literal)",
+		});
+	});
+
 	it("propagates ffmpeg acquisition failures with skipped output statuses and preserved paths", async () => {
 		const deps = baseDeps({
 			ffmpegProvider: {
