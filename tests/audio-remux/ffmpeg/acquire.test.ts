@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,37 +13,70 @@ import { FFMPEG_MANIFEST } from "../../../src/audio-remux/ffmpeg/manifest.js";
 
 const root = () => join(tmpdir(), `ffmpeg-test-${randomUUID()}`);
 
-function zipStored(name: string, data: Uint8Array): Uint8Array {
+/**
+ * 配布 zip はディレクトリエントリを含む複数エントリのアーカイブなので、
+ * ヘルパーも同じ形を作れる必要がある。1 エントリしか作れないと、
+ * 「ディレクトリエントリを 0 byte ファイルとして書く」不具合を再現できない。
+ */
+type ZipEntry = { readonly name: string; readonly data?: Uint8Array };
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+	const archive = new Uint8Array(
+		parts.reduce((total, part) => total + part.length, 0),
+	);
+	let cursor = 0;
+	for (const part of parts) {
+		archive.set(part, cursor);
+		cursor += part.length;
+	}
+	return archive;
+}
+
+function zipArchive(entries: readonly ZipEntry[]): Uint8Array {
 	const encoder = new TextEncoder();
-	const nameBytes = encoder.encode(name);
-	const local = new Uint8Array(30 + nameBytes.length + data.length);
-	const view = new DataView(local.buffer);
-	view.setUint32(0, 0x04034b50, true);
-	view.setUint16(4, 20, true);
-	view.setUint16(8, 0, true);
-	view.setUint32(18, data.length, true);
-	view.setUint32(22, data.length, true);
-	view.setUint16(26, nameBytes.length, true);
-	local.set(nameBytes, 30);
-	local.set(data, 30 + nameBytes.length);
-	const central = new Uint8Array(46 + nameBytes.length);
-	const centralView = new DataView(central.buffer);
-	centralView.setUint32(0, 0x02014b50, true);
-	centralView.setUint16(4, 20, true);
-	centralView.setUint16(6, 20, true);
-	centralView.setUint32(20, data.length, true);
-	centralView.setUint32(24, data.length, true);
-	centralView.setUint16(28, nameBytes.length, true);
-	centralView.setUint32(42, 0, true);
-	central.set(nameBytes, 46);
+	const locals: Uint8Array[] = [];
+	const centrals: Uint8Array[] = [];
+	let localOffset = 0;
+	for (const entry of entries) {
+		const nameBytes = encoder.encode(entry.name);
+		const data = entry.data ?? new Uint8Array(0);
+		const local = new Uint8Array(30 + nameBytes.length + data.length);
+		const view = new DataView(local.buffer);
+		view.setUint32(0, 0x04034b50, true);
+		view.setUint16(4, 20, true);
+		view.setUint16(8, 0, true);
+		view.setUint32(18, data.length, true);
+		view.setUint32(22, data.length, true);
+		view.setUint16(26, nameBytes.length, true);
+		local.set(nameBytes, 30);
+		local.set(data, 30 + nameBytes.length);
+		const central = new Uint8Array(46 + nameBytes.length);
+		const centralView = new DataView(central.buffer);
+		centralView.setUint32(0, 0x02014b50, true);
+		centralView.setUint16(4, 20, true);
+		centralView.setUint16(6, 20, true);
+		centralView.setUint32(20, data.length, true);
+		centralView.setUint32(24, data.length, true);
+		centralView.setUint16(28, nameBytes.length, true);
+		centralView.setUint32(42, localOffset, true);
+		central.set(nameBytes, 46);
+		locals.push(local);
+		centrals.push(central);
+		localOffset += local.length;
+	}
+	const centralSize = centrals.reduce((total, part) => total + part.length, 0);
 	const end = new Uint8Array(22);
 	const endView = new DataView(end.buffer);
 	endView.setUint32(0, 0x06054b50, true);
-	endView.setUint16(8, 1, true);
-	endView.setUint16(10, 1, true);
-	endView.setUint32(12, central.length, true);
-	endView.setUint32(16, local.length, true);
-	return new Uint8Array([...local, ...central, ...end]);
+	endView.setUint16(8, entries.length, true);
+	endView.setUint16(10, entries.length, true);
+	endView.setUint32(12, centralSize, true);
+	endView.setUint32(16, localOffset, true);
+	return concatBytes([...locals, ...centrals, end]);
+}
+
+function zipStored(name: string, data: Uint8Array): Uint8Array {
+	return zipArchive([{ name, data }]);
 }
 
 async function setup() {
@@ -98,6 +131,50 @@ describe("FfmpegAcquireManager", () => {
 				"utf8",
 			),
 		).toContain(FFMPEG_MANIFEST.buildId);
+		await rm(directory, { recursive: true, force: true });
+	});
+
+	// BtbN の配布 zip はディレクトリエントリ（名前が "/" で終わる、サイズ 0）を含む。
+	// これをファイルとして書くと `<dest>\ffmpeg-...` が 0 byte のファイルになり、
+	// 続く `bin/ffmpeg.exe` の mkdir が親をファイルとして見つけて EEXIST で落ちる。
+	// ffmpeg 未取得のマシンでは初回取得が必ず失敗する経路。
+	it("extracts directory entries as directories, not as 0 byte files", async () => {
+		const directory = await setup();
+		const rootDirectory = FFMPEG_MANIFEST.buildId;
+		const archive = zipArchive([
+			{ name: `${rootDirectory}/` },
+			{ name: `${rootDirectory}/bin/` },
+			{
+				name: FFMPEG_MANIFEST.archiveBinaryRelPath,
+				data: new TextEncoder().encode("fake ffmpeg"),
+			},
+			{
+				name: `${rootDirectory}/bin/ffprobe.exe`,
+				data: new TextEncoder().encode("fake ffprobe"),
+			},
+		]);
+		const manager = new FfmpegAcquireManager({
+			toolsDirectory: directory,
+			manifest: testManifest(archive),
+			fetch: fetchBytes(archive),
+			smokeTest: smokeOk,
+		});
+
+		const result = await manager.ensureFfmpeg();
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(await readFile(result.value.ffmpegPath, "utf8")).toBe("fake ffmpeg");
+		const extractedRoot = join(
+			directory,
+			FFMPEG_MANIFEST.buildId,
+			rootDirectory,
+		);
+		expect((await stat(extractedRoot)).isDirectory()).toBe(true);
+		// 同梱の ffprobe が見つかるのは、その親がディレクトリとして作られたときだけ
+		expect(result.value.ffprobePath).toBe(
+			join(extractedRoot, "bin", "ffprobe.exe"),
+		);
 		await rm(directory, { recursive: true, force: true });
 	});
 
