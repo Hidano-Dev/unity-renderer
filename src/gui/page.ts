@@ -109,6 +109,9 @@ const SCRIPT = `
 var TOKEN = window.__GUI_TOKEN__;
 var scenes = [];
 var savedSelection = [];
+// savedSelection がどのプロジェクトの選択なのか。別プロジェクトへ移ったとき
+// 引き継がないための目印
+var selectionProjectPath = "";
 var scenesLoaded = false;
 var scenesLoading = false;
 // 走査の世代。応答が返ったときに最新の要求かどうかを見分ける
@@ -330,6 +333,7 @@ function loadScenes() {
       updateRunButtons();
       // 一覧に無い名前は落とし、表示と保存内容を一致させる
       savedSelection = checkedSceneNames();
+      selectionProjectPath = projectPath;
       scheduleSave();
     })
     .catch(function (error) {
@@ -422,6 +426,8 @@ function applyState(state) {
   byId("height").value = state.resolution.height;
   byId("frameRate").value = state.frameRate;
   savedSelection = state.selectedScenes;
+  // 保存された選択は保存されたプロジェクトのもの
+  selectionProjectPath = state.projectPath.trim();
   var boxes = document.querySelectorAll(".format-check");
   for (var i = 0; i < boxes.length; i += 1) {
     boxes[i].checked = state.formats.indexOf(boxes[i].value) >= 0;
@@ -452,7 +458,11 @@ function init() {
     formatBoxes[i].addEventListener("change", scheduleSave);
   }
   byId("projectPath").addEventListener("change", function () {
-    savedSelection = checkedSceneNames();
+    // 参照ボタン経由では選択を捨てているのに手入力だけ引き継ぐと、貼り替えた
+    // 先の同名 Scene が自動でチェックされ、選んでいない Scene を録画し得る
+    var next = byId("projectPath").value.trim();
+    savedSelection = next === selectionProjectPath ? checkedSceneNames() : [];
+    selectionProjectPath = next;
     loadScenes();
   });
   byId("reloadScenes").addEventListener("click", function () {

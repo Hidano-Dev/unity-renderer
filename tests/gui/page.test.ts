@@ -38,6 +38,15 @@ describe("GUI page", () => {
 		expect(page).toContain("scenesLoading = true;");
 	});
 
+	it("drops the previous selection when the project path is typed over", () => {
+		// 参照ボタン経由は savedSelection = [] にしているのに、手入力だけ
+		// 引き継ぐと貼り替えた先の同名 Scene が自動でチェックされる
+		expect(page).toContain(
+			"savedSelection = next === selectionProjectPath ? checkedSceneNames() : [];",
+		);
+		expect(page).toContain("selectionProjectPath = projectPath;");
+	});
+
 	it("drops the previous scene list when a new scan starts", () => {
 		expect(page).toContain("var requestId = (sceneRequest += 1);");
 		// 遅れて返った前の走査結果を現在状態へ代入しない
