@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
 	access,
+	type FileHandle,
 	mkdir,
 	open,
 	readFile,
@@ -56,6 +57,15 @@ export interface FfmpegAcquireOptions {
 }
 
 /** design 5.7: 先行プロセスのダウンロード完了を待つ上限。 */
+/**
+ * ロック操作で「取得をあきらめる理由にはならない」エラー。Windows は削除中の
+ * ファイルを開こうとすると EPERM / EBUSY / EACCES を返すため、競合しているだけの
+ * 状況をそのまま失敗にすると lock-timeout として報告してしまう。
+ */
+function isTransientLockError(code: string | undefined): boolean {
+	return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
 const LOCK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 /** design 5.7: ロック獲得待ちのポーリング間隔。 */
 const LOCK_POLL_INTERVAL_MS = 2_000;
@@ -355,15 +365,57 @@ export class FfmpegAcquireManager {
 				await handle.close();
 				return true;
 			} catch (cause) {
-				if ((cause as NodeJS.ErrnoException).code !== "EEXIST") return false;
-				if (!(await lockOwnerAlive(lock))) {
-					await rm(lock, { force: true });
+				const code = (cause as NodeJS.ErrnoException).code;
+				if (code === "EEXIST") {
+					if (await lockOwnerAlive(lock)) {
+						await this.sleep(LOCK_POLL_INTERVAL_MS);
+						continue;
+					}
+					await this.reclaimStaleLock(lock);
 					continue;
 				}
+				if (!isTransientLockError(code)) return false;
 				await this.sleep(LOCK_POLL_INTERVAL_MS);
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * 残骸ロックの回収。**削除そのものを排他する**。
+	 *
+	 * stale と判断してから削除するまでの間に、別の取得が残骸を消して自分の
+	 * ロックを作り終えていることがある。そこで無条件に削除すると、作りたての
+	 * 他人のロックを消してしまう。2 つの取得が同時にこれを行うと、削除と作成の
+	 * 順序が入れ替わった側も `open(..., "wx")` に成功し、**両方が保持者のつもりで
+	 * download() へ進む**。同じ 146 MB を二重に取得したうえ、後から publish する
+	 * 側の `rename` が既存ディレクトリ相手になって失敗する。
+	 *
+	 * 回収権 (`.takeover`) を握れた 1 つだけが、保持者の生死を確認し直したうえで
+	 * 削除する。作成側は `open(..., "wx")` が排他するため、回収権を持っている間に
+	 * 新しいロックが現れることはない。
+	 */
+	private async reclaimStaleLock(lock: string): Promise<void> {
+		const takeover = `${lock}.takeover`;
+		let handle: FileHandle;
+		try {
+			handle = await open(takeover, "wx");
+		} catch (cause) {
+			const code = (cause as NodeJS.ErrnoException).code;
+			// 回収の途中で落ちたプロセスの回収権は捨てる
+			if (code === "EEXIST" && !(await lockOwnerAlive(takeover)))
+				await rm(takeover, { force: true });
+			await this.sleep(LOCK_POLL_INTERVAL_MS);
+			return;
+		}
+		try {
+			await handle.writeFile(JSON.stringify({ pid: process.pid }));
+			await handle.close();
+			// 回収権を得るまでの間に保持者が入れ替わっていることがある
+			if (!(await lockOwnerAlive(lock))) await rm(lock, { force: true });
+		} finally {
+			await rm(takeover, { force: true });
+		}
 	}
 
 	private async download(
